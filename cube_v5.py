@@ -697,7 +697,7 @@ def approach_target_recover(
     backup_step: float = 0.5,
     backup_interval: float = 0.05,
     backup_duration: float = 0.8,
-    search_pwm: float = 40,
+    search_pwm: float = -40,
     search_interval: float = 0.3,
     use_left_wheel: bool = False,
 ) -> bool:
