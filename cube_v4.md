@@ -245,16 +245,6 @@ forward_pid(40, 40, step=0.5, interval=0.05, duration=0.8)
 
 适合长距离直行；短距离可用 `forward_time`。
 
-### drive_blind(left_speed, right_speed, duration)
-
-与 `forward_time` 相同，语义上表示「盲开、不依赖视觉」。参数与用法一致。
-
-```python
-drive_blind(25, 25, 2.0)    # 直行
-drive_blind(35, 15, 1.5)    # 右转弧线
-drive_blind(15, 35, 1.5)    # 左转弧线
-```
-
 ---
 
 ## 9. 函数一览
@@ -270,7 +260,6 @@ drive_blind(15, 35, 1.5)    # 左转弧线
 | `turn_right` | 开环 | 顺时针转 |
 | `forward_time` | 开环 | 定时差速 |
 | `forward_pid` | 编码器闭环 | 霍尔直行 |
-| `drive_blind` | 开环 | 盲开（同 forward_time） |
 
 ---
 

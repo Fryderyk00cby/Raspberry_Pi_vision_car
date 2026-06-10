@@ -856,32 +856,6 @@ def forward_pid(
     print(f"[forward_pid] done L={left:.1f} R={right:.1f}")
 
 
-def drive_blind(left_speed: float, right_speed: float, duration: float) -> None:
-    """
-    盲开函数：按照指定的左右轮速度行驶一段时间。
-
-    参数：
-        left_speed: 左轮速度（PWM占空比，可正可负）
-        right_speed: 右轮速度（PWM占空比，可正可负）
-        duration: 执行持续时间（秒）
-
-    示例：
-        # 直行
-        drive_blind(25, 25, 2.0)
-
-        # 右转弧线
-        drive_blind(35, 15, 1.5)
-
-        # 左转弧线
-        drive_blind(15, 35, 1.5)
-
-        # 后退
-        drive_blind(-20, -20, 1.0)
-    """
-    print(f"[drive_blind] L={left_speed}, R={right_speed}, duration={duration}s")
-    _drive_for(duration, left_speed, right_speed)
-
-
 if __name__ == "__main__":
     # ----- 1. 初始化（调试可先 DRY_RUN=True 只看识别）-----
     setup(dry_run=False, show_debug=True)

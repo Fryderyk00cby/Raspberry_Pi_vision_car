@@ -132,7 +132,6 @@ python3 cube_v4.py
 | `turn_left` / `turn_right` | 开环 | 原地左转 / 右转 |
 | `forward_time` | 开环 | 定时差速行驶 |
 | `forward_pid` | 编码器闭环 | 霍尔反馈直行，减少跑偏 |
-| `drive_blind` | 开环 | 盲开（同 `forward_time`） |
 
 **速度约定：** 所有速度为 PWM 占空比，范围 **-100 ~ 100**；负值表示该轮反转。
 
