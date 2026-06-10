@@ -54,7 +54,7 @@ Raspberry_Pi_vision_car/
 ---
 
 ## 环境依赖
-
+- 如果已经完成课程所有实验那么你可以忽略这一步
 ```bash
 # 树莓派上
 sudo apt install python3-opencv python3-numpy
