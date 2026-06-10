@@ -40,16 +40,29 @@
 ```
 Raspberry_Pi_vision_car/
 ├── cube_v4.py      # 主函数库（稳定版）
-├── cube_v5.py      # v4 + approach_target_brake（带减速靠近）
+├── cube_v5.py      # v4 增强版（见下方对比）
 ├── HSV_test.py     # HSV 颜色临场标定工具
 ├── cube_v4.md      # cube_v4 详细 API 与调参说明
+├── cube_v5.md      # cube_v5 详细 API 与调参说明
 └── README.md
 ```
 
 **版本选择：**
 
-- 一般比赛流程用 **`cube_v4.py`** 即可。
-- 需要「先快后慢」靠近色块时，用 **`cube_v5.py`** 的 `approach_target_brake`。
+| 版本 | 适用场景 |
+|------|----------|
+| **`cube_v4.py`** | 基础流程已够用，API 更简单 |
+| **`cube_v5.py`** | 需要 v4 全部能力，外加下方增强功能 |
+
+**v5 相比 v4 新增：**
+
+| 功能 | 说明 |
+|------|------|
+| `search_color(..., use_left_wheel=True)` | 搜色可选左轮或右轮（默认右轮，与 v4 一致） |
+| `approach_target_brake` | 靠近时分两段速度：接近 `brake_pixel` 后降速再停 |
+| `approach_target_recover` | 靠近途中丢失目标时，自动后退 → 搜色 → 再次靠近 |
+
+v4 与 v5 共有的 `setup`、`approach_target`、`forward_pid` 等函数用法相同；v5 专有函数详见 **[cube_v5.md](./cube_v5.md)**，v4 详见 **[cube_v4.md](./cube_v4.md)**。
 
 ---
 
@@ -126,16 +139,18 @@ python3 cube_v4.py
 |------|------|------|
 | `setup` | 生命周期 | 初始化 GPIO、编码器、摄像头 |
 | `cleanup` | 生命周期 | 停车并释放资源（务必放在 `finally`） |
-| `search_color` | 视觉闭环 | 右轮步进搜色，找到返回 `True` |
+| `search_color` | 视觉闭环 | 单轮步进搜色；**v5** 支持 `use_left_wheel` |
 | `approach_target` | 视觉闭环 | PID 直行靠近，达到 `stop_pixels` 停止 |
-| `approach_target_brake` | 视觉闭环 | **仅 v5**：到达 `brake_pixel` 后降速再停 |
+| `approach_target_brake` | 视觉闭环 | **仅 v5**：两段速度减速靠近 |
+| `approach_target_recover` | 视觉闭环 | **仅 v5**：丢目标后后退、搜色、再靠近 |
 | `turn_left` / `turn_right` | 开环 | 原地左转 / 右转 |
 | `forward_time` | 开环 | 定时差速行驶 |
 | `forward_pid` | 编码器闭环 | 霍尔反馈直行，减少跑偏 |
 
 **速度约定：** 所有速度为 PWM 占空比，范围 **-100 ~ 100**；负值表示该轮反转。
 
-更完整的参数说明、Config 字段、PID 调参见 **[cube_v4.md](./cube_v4.md)**。
+- v4 完整说明：**[cube_v4.md](./cube_v4.md)**
+- v5 完整说明（含新增 API）：**[cube_v5.md](./cube_v5.md)**
 
 ---
 
@@ -156,7 +171,7 @@ python3 cube_v4.py
 | 标定项 | 方法 | 修改位置 |
 |--------|------|----------|
 | HSV 颜色 | 运行 `HSV_test.py` | `Config` 的 `LOW_*` / `HIGH_*` |
-| 搜色步进 | 调 `right_pwm`、`interval` | `search_color` 参数 |
+| 搜色步进 | 调 `wheel_pwm`、`interval`；v5 可选左/右轮 | `search_color` 参数 |
 | 搜色等待 | 画面稳定时间 | `SEARCH_COLOR_SETTLE_TIME` |
 | 靠近距离 | debug 窗口看 `px=` | `stop_pixels` |
 | 转弯角度 | 量 90° 对应时长 | `turn_left` / `turn_right` |

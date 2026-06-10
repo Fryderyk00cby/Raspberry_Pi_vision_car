@@ -533,36 +533,39 @@ _APPROACH_DETECT_MIN_PIXELS = 50
 
 
 def search_color(
-    right_pwm: float,
+    wheel_pwm: float,
     interval: float,
     color: str,
+    use_left_wheel: bool = False,
 ) -> bool:
     """
-    右轮单轮步进旋转搜索指定颜色；找到与否与 approach_target 能否开进同一标准。
+    单轮步进旋转搜索指定颜色；找到与否与 approach_target 能否开进同一标准。
 
-    每步流程：左轮 0、右轮 right_pwm 转 interval 秒 → 停车 → 等画面稳 → 识别一帧。
+    每步流程：固定一侧轮为 0、另一侧轮 wheel_pwm 转 interval 秒 → 停车 → 等画面稳 → 识别一帧。
     识别条件同 approach_target：最大色块面积在 [1, MAX_VALID_AREA] 内即视为找到。
 
     参数：
-        right_pwm: 右轮 PWM（-100~100，可正可负），左轮恒为 0
-        interval:  每步右轮旋转时长（秒）
-        color:     blue / yellow / red（或 蓝/黄/红）
+        wheel_pwm:      驱动轮 PWM（-100~100，可正可负），另一侧轮恒为 0
+        interval:       每步旋转时长（秒）
+        color:          blue / yellow / red（或 蓝/黄/红）
+        use_left_wheel: False（默认）用右轮搜色；True 时用左轮搜色
 
     返回：
         True  — 画面内已有可 approach 的色块，可接 approach_target(...)
         False — 在 SEARCH_FULL_ROTATION_TIME 内未找到
 
     示例：
-        if search_color(25, 0.12, "blue"):
-            approach_target("blue", 28, pid_approach, CFG.APPROACH_STOP_PIXELS)
+        search_color(25, 0.12, "blue")                      # 右轮（默认）
+        search_color(-40, 0.3, "yellow", use_left_wheel=True)  # 左轮
     """
     cam, vis, car = _require_ready()
     color = _norm_color(color)
-    right_pwm = clamp(float(right_pwm), -100, 100)
+    wheel_pwm = clamp(float(wheel_pwm), -100, 100)
     interval = max(0.02, float(interval))
+    wheel_name = "left" if use_left_wheel else "right"
 
     print(
-        f"[search_color] 找 {color}, right_pwm={right_pwm}, "
+        f"[search_color] 找 {color}, {wheel_name}_pwm={wheel_pwm}, "
         f"interval={interval}s, timeout={CFG.SEARCH_FULL_ROTATION_TIME}s"
     )
 
@@ -583,7 +586,10 @@ def search_color(
         return True
 
     while now() - t0 < CFG.SEARCH_FULL_ROTATION_TIME:
-        car.drive(0, right_pwm)
+        if use_left_wheel:
+            car.drive(wheel_pwm, 0)
+        else:
+            car.drive(0, wheel_pwm)
         time.sleep(interval)
         car.stop()
         time.sleep(CFG.SEARCH_COLOR_SETTLE_TIME)
@@ -598,25 +604,13 @@ def search_color(
     return False
 
 
-def approach_target(
+def _approach_target_run(
     color: str,
     forward_speed: float,
     pid_params: PidInput,
     stop_pixels: int,
-) -> bool:
-    """
-    使用 PID 直行靠近指定颜色魔方，色块像素数达到 stop_pixels 后停止。
-
-    参数：
-        color: blue / yellow / red
-        forward_speed: 前进基础 PWM 占空比（左右轮同向）
-        pid_params: PidParams 或 (kp, ki, kd)
-        stop_pixels: 达到该像素面积（轮廓面积）后结束前进
-
-    返回：
-        True  — 已靠近到阈值
-        False — 超时或长时间丢失目标
-    """
+) -> str:
+    """执行一次靠近；返回 ok / lost / timeout。"""
     cam, vis, car = _require_ready()
     color = _norm_color(color)
     pp = _parse_pid(pid_params)
@@ -645,14 +639,14 @@ def approach_target(
                 continue
             car.stop()
             print(f"[approach_target] 丢失 {color} 过久")
-            return False
+            return "lost"
 
         lost = 0
         if det["pixel_count"] >= stop_pixels:
             car.stop()
             print(f"[approach_target] 到达 stop_pixels={det['pixel_count']}")
             time.sleep(0.1)
-            return True
+            return "ok"
 
         error = det["center_x"] - CFG.WIDTH / 2.0
         delta = pid.feedback(error)
@@ -660,7 +654,6 @@ def approach_target(
         if abs(delta) < pp.min_delta:
             delta = 0.0
 
-        # error>0 目标偏右 -> 左轮快、右轮慢
         left = forward_speed + delta
         right = forward_speed - delta
         car.drive(left, right)
@@ -668,7 +661,83 @@ def approach_target(
 
     car.stop()
     print("[approach_target] 超时")
-    return False
+    return "timeout"
+
+
+def approach_target(
+    color: str,
+    forward_speed: float,
+    pid_params: PidInput,
+    stop_pixels: int,
+) -> bool:
+    """
+    使用 PID 直行靠近指定颜色魔方，色块像素数达到 stop_pixels 后停止。
+
+    参数：
+        color: blue / yellow / red
+        forward_speed: 前进基础 PWM 占空比（左右轮同向）
+        pid_params: PidParams 或 (kp, ki, kd)
+        stop_pixels: 达到该像素面积（轮廓面积）后结束前进
+
+    返回：
+        True  — 已靠近到阈值
+        False — 超时或长时间丢失目标
+    """
+    return _approach_target_run(color, forward_speed, pid_params, stop_pixels) == "ok"
+
+
+def approach_target_recover(
+    color: str,
+    forward_speed: float,
+    pid_params: PidInput,
+    stop_pixels: int,
+    *,
+    backup_left: float = -40,
+    backup_right: float = -40,
+    backup_step: float = 0.5,
+    backup_interval: float = 0.05,
+    backup_duration: float = 0.8,
+    search_pwm: float = 40,
+    search_interval: float = 0.3,
+    use_left_wheel: bool = False,
+) -> bool:
+    """
+    靠近色块；若尚未到达阈值且因丢失目标失败，则后退 → 搜色 → 再次靠近。
+
+    流程：
+        1. 调用 approach_target
+        2. 若因丢失目标失败：forward_pid 后退 backup_duration 秒
+        3. search_color（默认右轮 pwm=40, interval=0.3）
+        4. 搜到则再次 approach_target
+
+    参数：
+        color, forward_speed, pid_params, stop_pixels: 同 approach_target
+        backup_*: 后退用的 forward_pid 参数（默认与 __main__ 直行一致，速度取负）
+        search_pwm, search_interval, use_left_wheel: 恢复搜色参数
+
+    返回：
+        True  — 首次或恢复后成功靠近到 stop_pixels
+        False — 超时、搜色失败或恢复后仍失败
+    """
+    result = _approach_target_run(color, forward_speed, pid_params, stop_pixels)
+    if result == "ok":
+        return True
+    if result != "lost":
+        print(f"[approach_target_recover] 非丢失目标失败({result})，跳过后退搜色")
+        return False
+
+    color = _norm_color(color)
+    print(f"[approach_target_recover] 丢失 {color}，后退 {backup_duration}s 后重新搜色")
+    forward_pid(
+        backup_left, backup_right, backup_step, backup_interval, backup_duration
+    )
+    if not search_color(
+        search_pwm, search_interval, color, use_left_wheel=use_left_wheel
+    ):
+        print(f"[approach_target_recover] 搜色未找到 {color}")
+        return False
+
+    return _approach_target_run(color, forward_speed, pid_params, stop_pixels) == "ok"
 
 
 def approach_target_brake(
