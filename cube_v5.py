@@ -4,7 +4,7 @@
 魔方绕桩任务 — 可拼接函数库（OpenCV + RPi.GPIO）
 
 本文件不提供完整 main，只提供动作函数 + 初始化/清理/调试显示。
-  含 forward_pid（霍尔编码器差速直行）、search_color（右轮步进搜色）。
+  含 forward_pid / drive_distance / turn_angle（霍尔编码器）、search_color（步进搜色）。
 速度参数均为 PWM 占空比，范围 -100~100；负值表示该轮反转（后退）。
 
 摄像头（参考 text_alms）：默认 320x240 @ 40fps，降低分辨率以提升树莓派帧率。
@@ -18,6 +18,7 @@
       3) 无图形界面时：可把 SHOW_DEBUG 关掉，仅用 print 日志；或自行加 mjpg-streamer 等推流。
 """
 
+import math
 import time
 import threading
 from dataclasses import dataclass
@@ -57,11 +58,21 @@ class Config:
     RIGHT_IN2: int = 21
     PWM_FREQ: int = 80
 
-    # 霍尔编码器（参考 auto_back.py：LS=6, RS=12）
+    # 霍尔编码器（参考 v18：B2A=GPIO6, B1A=GPIO12，单相上升沿累计计数）
     LEFT_ENCODER: int = 6
     RIGHT_ENCODER: int = 12
     ENCODER_PULSES_PER_REV: float = 585.0
     FORWARD_PID_INTERVAL: float = 0.01
+
+    WHEEL_DIAMETER_CM: float = 6.5
+    TRACK_WIDTH_CM: float = 14.0
+    DIST_CALIB: float = 0.9
+    TURN_CALIB: float = 0.9
+    ENC_FINISH_PULSES: int = 4
+    ENC_TIMEOUT_S: float = 6.0
+    ENC_LOOP_INTERVAL: float = 0.005
+    ENC_SWAP: bool = False
+    ENC_DRY_CM_PER_SEC: float = 35.0
 
     SWAP_WHEELS: bool = False
     INVERT_LEFT: bool = False
@@ -395,19 +406,16 @@ class Car:
 
 
 # =============================================================================
-# 霍尔编码器（参考 auto_back.py，用于 forward_pid 左右轮速度平衡）
+# 霍尔编码器（参考 v18：累计脉冲，用于 drive_distance / turn_angle / forward_pid）
 # =============================================================================
 
 class WheelEncoder:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.dry = cfg.DRY_RUN or GPIO is None
-        self.lcounter = 0
-        self.rcounter = 0
-        self.lspeed = 0.0
-        self.rspeed = 0.0
-        self.running = False
-        self.thread: Optional[threading.Thread] = None
+        self._count_left = 0
+        self._count_right = 0
+        self._lock = threading.Lock()
         self._enabled = False
 
     def setup(self) -> None:
@@ -418,34 +426,27 @@ class WheelEncoder:
         GPIO.add_event_detect(self.cfg.LEFT_ENCODER, GPIO.RISING, callback=self._on_left)
         GPIO.add_event_detect(self.cfg.RIGHT_ENCODER, GPIO.RISING, callback=self._on_right)
         self._enabled = True
+        print(f"[ENCODER] ready L=GPIO{self.cfg.LEFT_ENCODER} R=GPIO{self.cfg.RIGHT_ENCODER}")
 
     def _on_left(self, _channel: int) -> None:
-        self.lcounter += 1
+        with self._lock:
+            self._count_left += 1
 
     def _on_right(self, _channel: int) -> None:
-        self.rcounter += 1
+        with self._lock:
+            self._count_right += 1
 
-    def start(self) -> None:
-        self.running = True
-        self.thread = threading.Thread(target=self._loop, daemon=True)
-        self.thread.start()
+    def reset(self) -> None:
+        with self._lock:
+            self._count_left = 0
+            self._count_right = 0
 
-    def _loop(self) -> None:
-        while self.running:
-            self.lspeed = self.lcounter / self.cfg.ENCODER_PULSES_PER_REV
-            self.rspeed = self.rcounter / self.cfg.ENCODER_PULSES_PER_REV
-            self.lcounter = 0
-            self.rcounter = 0
-            time.sleep(self.cfg.FORWARD_PID_INTERVAL)
-
-    def get_speeds(self) -> Tuple[float, float]:
-        return self.lspeed, self.rspeed
+    def read(self) -> Tuple[int, int]:
+        """返回物理侧 (left_count, right_count)。"""
+        with self._lock:
+            return self._count_left, self._count_right
 
     def stop(self) -> None:
-        self.running = False
-        if self.thread is not None:
-            self.thread.join(timeout=1.0)
-            self.thread = None
         if self._enabled and not self.dry:
             try:
                 GPIO.remove_event_detect(self.cfg.LEFT_ENCODER)
@@ -453,6 +454,97 @@ class WheelEncoder:
             except Exception:
                 pass
             self._enabled = False
+
+
+def _wheel_counts() -> Tuple[int, int]:
+    """映射为与 Car.drive(left, right) 一致的软件左右累计脉冲。"""
+    if _encoder is None:
+        return 0, 0
+    pl, pr = _encoder.read()
+    if CFG.ENC_SWAP:
+        return pr, pl
+    return pl, pr
+
+
+def _pulses_for_distance(dist_cm: float) -> float:
+    circ = math.pi * CFG.WHEEL_DIAMETER_CM
+    revs = dist_cm / circ
+    return revs * CFG.ENCODER_PULSES_PER_REV * CFG.DIST_CALIB
+
+
+def _pulses_for_turn(angle_deg: float) -> float:
+    wheel_circ = math.pi * CFG.WHEEL_DIAMETER_CM
+    turn_circ = math.pi * CFG.TRACK_WIDTH_CM
+    wheel_travel = turn_circ * (angle_deg / 360.0)
+    revs = wheel_travel / wheel_circ
+    return revs * CFG.ENCODER_PULSES_PER_REV * CFG.TURN_CALIB
+
+
+def _run_to_target(
+    target_pulses: float,
+    base_left: float,
+    base_right: float,
+    step: float,
+    label: str,
+    *,
+    dry_dist_cm: Optional[float] = None,
+) -> None:
+    """通用编码器闭环：累计脉冲到位；用 step 离散修正左右同步。"""
+    _, _, car = _require_ready()
+    target = max(0.0, float(target_pulses))
+    step = max(0.0, float(step))
+    finish = CFG.ENC_FINISH_PULSES
+    interval = max(0.002, CFG.ENC_LOOP_INTERVAL)
+
+    print(f"[ENC] {label}: target={target:.0f} pulses, step={step}")
+
+    if _encoder is None or _encoder.dry:
+        if dry_dist_cm is not None:
+            duration = max(0.05, abs(dry_dist_cm) / CFG.ENC_DRY_CM_PER_SEC)
+        else:
+            duration = max(0.1, target / CFG.ENCODER_PULSES_PER_REV * 0.5)
+        print(f"[ENC] dry run {label}: {duration:.2f}s")
+        car.drive(base_left, base_right)
+        time.sleep(duration)
+        car.stop()
+        time.sleep(0.06)
+        return
+
+    _encoder.reset()
+    left = float(base_left)
+    right = float(base_right)
+    t0 = now()
+
+    while True:
+        if now() - t0 > CFG.ENC_TIMEOUT_S:
+            print(f"[ENC] {label} timeout, stop early")
+            break
+
+        cl, cr = _wheel_counts()
+        done_l = cl >= target - finish
+        done_r = cr >= target - finish
+        if done_l and done_r:
+            break
+
+        if cl > cr:
+            left -= step
+            right += step
+        elif cl < cr:
+            left += step
+            right -= step
+
+        if done_l:
+            left = 0.0
+        if done_r:
+            right = 0.0
+
+        car.drive(clamp(left, -100, 100), clamp(right, -100, 100))
+        time.sleep(interval)
+
+    car.stop()
+    cl, cr = _wheel_counts()
+    print(f"[ENC] {label} done: L={cl} R={cr} dt={now() - t0:.2f}s")
+    time.sleep(0.06)
 
 
 # =============================================================================
@@ -476,7 +568,6 @@ def setup(dry_run: bool = False, show_debug: bool = True) -> None:
     _camera = CameraThread(CFG)
     _car.setup()
     _encoder.setup()
-    _encoder.start()
     _camera.start()
     time.sleep(0.2)
 
@@ -880,23 +971,22 @@ def forward_pid(
     duration: float,
 ) -> None:
     """
-    霍尔编码器闭环直行（参考 auto_back.py）：
-    以左右轮初速度前进，每隔 interval 读编码器转速并修正，左快则左减右加，右快则右减左加。
+    霍尔编码器直行（按时间停）：每隔 interval 读脉冲增量并修正，左快则左减右加。
 
     参数：
         left_speed:  左轮初始 PWM 占空比（可负表示后退）
         right_speed: 右轮初始 PWM 占空比
-        step:        每次调整的速度修正步长（auto_back 默认 0.2）
-        interval:    调整间隔（秒），每隔多久读编码器并修正一次（auto_back 默认 0.01）
+        step:        每次调整的速度修正步长
+        interval:    调整间隔（秒）
         duration:    前进总时长（秒）
 
-    用法（setup 后可直接调用，与 forward_time 一样即插即用）：
-        forward_pid(20, 20, 0.2, 0.01, 1.6)
+    按距离/角度停请用 drive_distance / turn_angle。
     """
     _, _, car = _require_ready()
     left = float(left_speed)
     right = float(right_speed)
     interval = max(0.005, float(interval))
+    step = max(0.0, float(step))
 
     print(
         f"[forward_pid] {duration:.2f}s L0={left} R0={right} "
@@ -905,15 +995,21 @@ def forward_pid(
 
     t0 = now()
     while now() - t0 < duration:
+        snap_l = snap_r = 0
+        if _encoder is not None and not _encoder.dry:
+            snap_l, snap_r = _encoder.read()
+
         car.drive(left, right)
         time.sleep(interval)
 
         if _encoder is not None and not _encoder.dry:
-            lspeed, rspeed = _encoder.get_speeds()
-            if lspeed > rspeed:
+            new_l, new_r = _encoder.read()
+            dl = new_l - snap_l
+            dr = new_r - snap_r
+            if dl > dr:
                 right += step
                 left -= step
-            elif lspeed < rspeed:
+            elif dl < dr:
                 right -= step
                 left += step
 
@@ -923,6 +1019,49 @@ def forward_pid(
     car.stop()
     time.sleep(0.06)
     print(f"[forward_pid] done L={left:.1f} R={right:.1f}")
+
+
+def drive_distance(dist_cm: float, speed: float, step: float) -> None:
+    """
+    编码器闭环直行指定距离（参考 v18 drive_distance + forward_pid 式 step 修正）。
+
+    参数：
+        dist_cm: 距离（厘米），正=前进，负=后退
+        speed:   轮速 PWM 幅度（传正数），方向由 dist_cm 符号决定
+        step:    每控制周期左右同步修正步长（同 forward_pid）
+
+    示例：
+        drive_distance(30, 40, 0.2)
+        drive_distance(-20, 35, 0.2)
+    """
+    sign = 1 if dist_cm >= 0 else -1
+    s = clamp(abs(float(speed)), 0, 100) * sign
+    target = _pulses_for_distance(abs(float(dist_cm)))
+    _run_to_target(
+        target, s, s, step, f"drive {dist_cm:.1f}cm", dry_dist_cm=float(dist_cm)
+    )
+
+
+def turn_angle(angle_deg: float, speed: float, step: float) -> None:
+    """
+    编码器闭环原地转指定角度（参考 v18 turn_angle + step 修正）。
+
+    参数：
+        angle_deg: 角度（度），正=逆时针左转，负=顺时针右转
+        speed:     转弯 PWM 幅度（传正数）
+        step:      每控制周期左右同步修正步长
+
+    示例：
+        turn_angle(90, 50, 0.2)
+        turn_angle(-75, 45, 0.2)
+    """
+    angle_deg = float(angle_deg)
+    s = clamp(abs(float(speed)), 0, 100)
+    target = _pulses_for_turn(abs(angle_deg))
+    if angle_deg >= 0:
+        _run_to_target(target, -s, s, step, f"turnL {angle_deg:.0f}deg")
+    else:
+        _run_to_target(target, s, -s, step, f"turnR {-angle_deg:.0f}deg")
 
 
 if __name__ == "__main__":

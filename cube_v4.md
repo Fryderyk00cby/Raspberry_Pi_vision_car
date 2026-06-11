@@ -56,51 +56,76 @@ finally:
 
 ---
 
-## 3. Config 配置项
+## 3. 传参 vs Config：改哪里？
 
-全局配置在 `CFG = Config()`，比赛前按现场修改。常用项如下。
+| 类型 | 在哪里改 | 什么时候改 | 示例 |
+|------|----------|------------|------|
+| **传参** | 调用函数时写在 `main` 里 | **每个赛段、每次动作**都可能不同 | `stop_pixels=15000`、`forward_pid(..., 0.8)` |
+| **PidParams** | `main` 里构造 `PidParams(...)` | 靠近抖动/响应慢时调 | `kp=0.18, min_delta=8` |
+| **Config (`CFG`)** | `cube_v4.py` 顶部 `Config` 或运行时 `CFG.xxx = ...` | **接线、HSV、分辨率、超时**等现场一次标定 | `LOW_BLUE`、`SEARCH_COLOR_SETTLE_TIME` |
 
-### 摄像头
+**经验法则：**
 
-| 字段 | 默认 | 说明 |
-|------|------|------|
-| `CAMERA_ID` | 0 | 摄像头设备号 |
-| `WIDTH` / `HEIGHT` | 320 / 240 | 分辨率，降低可换更高帧率 |
-| `FPS` | 40 | 目标帧率 |
-| `SHOW_DEBUG` | True | 是否显示调试窗口 |
+- 和「这一趟走多远、转多久、停多近」相关的 → **传参**
+- 和「硬件接线、摄像头、颜色识别、电机方向、全局超时」相关的 → **Config**
+- 和「PID 手感」相关的 → **PidParams**（也算传参，但单独成组）
 
-### HSV 颜色阈值
-
-| 字段 | 颜色 |
-|------|------|
-| `LOW_RED1` / `HIGH_RED1` | 红色（H 接近 0） |
-| `LOW_RED2` / `HIGH_RED2` | 红色（H 接近 180） |
-| `LOW_YELLOW` / `HIGH_YELLOW` | 黄色 |
-| `LOW_BLUE` / `HIGH_BLUE` | 蓝色 |
-
-临场标定：用同目录下的 `HSV_test.py` 调 mask，再把数值粘贴到这里。
-
-### 视觉面积阈值（与分辨率相关）
-
-| 字段 | 默认 @320×240 | 用途 |
-|------|---------------|------|
-| `APPROACH_STOP_PIXELS` | 21000 | 靠近停止参考值 |
-| `MAX_VALID_AREA` | 80000 | 过大轮廓视为误检 |
-
-640×480 换 320×240 时，面积约 ×0.25。例如：85000→21000。
-
-### 搜索 / 靠近
-
-| 字段 | 默认 | 说明 |
-|------|------|------|
-| `SEARCH_FULL_ROTATION_TIME` | 10 s | `search_color` 总搜索超时 |
-| `SEARCH_COLOR_SETTLE_TIME` | 0.5 s | `search_color` 每步停车后等待稳定 |
-| `APPROACH_TIMEOUT` | 15 s | 靠近超时 |
-| `APPROACH_LOST_BACKUP_FRAMES` | 10 | 丢失目标后先倒车几帧再放弃 |
+下文每个 API 都会拆成 **传参** 与 **Config** 两表。
 
 ---
 
-## 4. PID 参数 PidParams
+## 4. Config 总表（按用途分类）
+
+全局对象：`from cube_v4 import CFG` 或改 `cube_v4.py` 里 `Config` 默认值。
+
+### 4.1 硬件 / 接线（装好车后改一次）
+
+| 字段 | 默认 | 关联 API | 说明 |
+|------|------|----------|------|
+| `LEFT_PWM` / `RIGHT_PWM` 等 GPIO | 见代码 | 全部电机函数 | 电机接线，错则全车方向乱 |
+| `PWM_FREQ` | 80 | 全部电机 | PWM 频率 |
+| `LEFT_ENCODER` / `RIGHT_ENCODER` | 6 / 12 | `forward_pid` | 霍尔引脚 |
+| `ENCODER_PULSES_PER_REV` | 585 | `forward_pid` | 课件给定，一般不改 |
+| `SWAP_WHEELS` | False | 全部 `drive` | 左右命令对调 |
+| `INVERT_LEFT` / `INVERT_RIGHT` | False | 全部 `drive` | 单侧电机正反转对调 |
+
+### 4.2 摄像头（影响帧率与识别稳定性）
+
+| 字段 | 默认 | 关联 API | 说明 |
+|------|------|----------|------|
+| `CAMERA_ID` | 0 | 全部视觉 | `/dev/video0` 等 |
+| `CAMERA_BACKEND` | v4l2 | 全部视觉 | 树莓派建议 v4l2 |
+| `WIDTH` / `HEIGHT` | 320 / 240 | 全部视觉 | 降分辨率换帧率；**改后须重标 px 阈值** |
+| `FPS` | 40 | 全部视觉 | 目标帧率 |
+| `SHOW_DEBUG` / `DEBUG_WINDOW` | True / cube debug | `show_debug` | 也可 `setup(show_debug=False)` |
+
+### 4.3 HSV 颜色（影响搜色/靠近能否看到色块）
+
+| 字段 | 关联 API |
+|------|----------|
+| `LOW_RED1` / `HIGH_RED1` / `LOW_RED2` / `HIGH_RED2` | `search_color`, `approach_target` |
+| `LOW_YELLOW` / `HIGH_YELLOW` | 同上 |
+| `LOW_BLUE` / `HIGH_BLUE` | 同上 |
+
+用 `HSV_test.py` 标定后写入 Config。
+
+### 4.4 视觉面积 / 超时（不常改，除非换分辨率或行为异常）
+
+| 字段 | 默认 | 关联 API | 说明 |
+|------|------|----------|------|
+| `MAX_VALID_AREA` | 80000 | `search_color`, `approach_target` | 轮廓过大当误检；换分辨率须缩放 |
+| `APPROACH_STOP_PIXELS` | 21000 | 文档参考值 | **实际停靠多用传参 `stop_pixels`** |
+| `SEARCH_FULL_ROTATION_TIME` | 10 s | `search_color` | 搜色总超时 |
+| `SEARCH_COLOR_SETTLE_TIME` | 0.5 s | `search_color` | 每步停车后等画面稳 |
+| `APPROACH_TIMEOUT` | 15 s | `approach_target` | 靠近单段最长时间 |
+| `APPROACH_LOST_BACKUP_FRAMES` | 10 | `approach_target` | 丢目标后倒车 retry 帧数 |
+| `APPROACH_MIN_DELTA` / `APPROACH_MAX_DELTA` | 6 / 18 | 未直接使用 | 请用 `PidParams` 里的同名项 |
+
+640×480 → 320×240 时轮廓面积约 ×0.25。
+
+---
+
+## 5. PID 参数 PidParams（传给 approach_target，不算 Config）
 
 `approach_target` 接受 `PidParams` 或元组 `(kp, ki, kd)`。
 
@@ -122,132 +147,182 @@ pid_approach = PidParams(kp=0.18, ki=0.0, kd=0.012, min_delta=8, max_delta=12)
 
 ---
 
-## 5. 生命周期函数
+## 6. 生命周期 API
 
 ### setup(dry_run=False, show_debug=True)
 
-主程序**开头调用一次**。初始化：
+**功能：** 程序入口，初始化视觉、电机、霍尔、摄像头线程。
 
-- 视觉模块 `Vision`
-- 电机 `Car`（GPIO PWM）
-- 霍尔编码器 `WheelEncoder`（后台线程）
-- 摄像头 `CameraThread`（后台线程）
+| 类型 | 名称 | 默认 | 说明 |
+|------|------|------|------|
+| 传参 | `dry_run` | False | True=只打印电机，不驱动 GPIO |
+| 传参 | `show_debug` | True | 是否弹 `cv2.imshow` 窗口 |
+| Config | 其余 GPIO/摄像头/HSV | 见 §4 | 在 `setup` 前改 `CFG` 或源码 `Config` |
 
 ### cleanup()
 
-主程序**结束或异常时调用**。停止编码器、停车、释放摄像头、清理 GPIO、关闭 OpenCV 窗口。
+**功能：** 停车、停编码器、释放摄像头与 GPIO。**无传参**，必须在 `finally` 里调用。
 
 ### show_debug(state, det=None)
 
-各闭环函数内部已自动调用，一般无需手动写。若自己写识别循环，可传入状态文字和检测结果刷新调试画面。
+**功能：** 手动刷新调试窗口；闭环函数内部已自动调用。
 
----
-
-## 6. search_color(right_pwm, interval, color) → bool
-
-**右轮步进搜色**：左轮恒为 0，右轮转一小段 → 停车 → 等画面稳定（默认 0.5s）→ 识别。
-
-```python
-search_color(-40, 0.3, "yellow")   # 右轮负转，每步 0.3 秒
-search_color(40, 0.3, "red")       # 右轮正转
-```
-
-| 参数 | 说明 |
+| 传参 | 说明 |
 |------|------|
-| `right_pwm` | 右轮 PWM，-100~100 |
-| `interval` | 每步旋转时长（秒），建议 ≥ 0.02 |
-| `color` | `"blue"` / `"yellow"` / `"red"`（或 蓝/黄/红） |
+| `state` | 左上角状态文字 |
+| `det` | 可选检测结果 dict |
 
-| 返回值 | 含义 |
+| Config | 说明 |
 |--------|------|
-| `True` | 画面内已有色块，可接 `approach_target` |
-| `False` | 在 `SEARCH_FULL_ROTATION_TIME` 内未找到 |
-
-识别标准与 `approach_target` 一致：最大色块面积在 `[1, MAX_VALID_AREA]` 即视为找到。
-
-**典型用法：**
-
-```python
-if search_color(40, 0.3, "red"):
-    approach_target("red", 28, pid_approach, stop_pixels=6000)
-```
+| `SHOW_DEBUG` | False 时即使调用也不显示 |
+| `DEBUG_WINDOW` | 窗口标题 |
 
 ---
 
-## 7. approach_target(color, forward_speed, pid_params, stop_pixels) → bool
+## 7. search_color(right_pwm, interval, color) → bool
 
-**PID 直行靠近**指定颜色魔方，色块面积达到 `stop_pixels` 后停车。
+**功能：** 右轮步进搜色——转一步 → 停车等待 → 识别一帧；找到则返回 True，可接 `approach_target`。
+
+**流程：** `drive(0, right_pwm)` → `interval` 秒 → 停 → 等 `SEARCH_COLOR_SETTLE_TIME` → `detect`。
 
 ```python
-approach_target("blue", forward_speed=28, pid_params=pid_approach, stop_pixels=15000)
+search_color(-40, 0.3, "yellow")
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `forward_speed` | 前进基础 PWM（左右轮同向） |
-| `stop_pixels` | 轮廓面积达到此值停止 |
+#### 传参（main 里常改）
 
-| 返回值 | 含义 |
-|--------|------|
-| `True` | 已靠近到阈值 |
-| `False` | 超时或长时间丢失目标（会短暂倒车 retry） |
+| 参数 | 说明 | 典型值 / 标定 |
+|------|------|----------------|
+| `right_pwm` | 右轮 PWM，左轮恒为 0；正负决定扫向 | ±18~±40 |
+| `interval` | 每步转动时长（秒） | 0.12~0.3 |
+| `color` | 目标颜色 | `"blue"` / `"yellow"` / `"red"` |
 
-**丢目标行为：** 连续丢失时先以 `-forward_speed * 0.5` 倒车，超过 `APPROACH_LOST_BACKUP_FRAMES` 帧仍找不到则返回 `False`。
+#### Config（不常改）
 
-**stop_pixels 标定：** 在 `show_debug` 窗口看 `px=` 数值。离方块越近 px 越大，在合适停车距离读数即为参考值。
+| 字段 | 默认 | 何时改 |
+|------|------|--------|
+| `SEARCH_COLOR_SETTLE_TIME` | 0.5 s | 画面糊/帧率低 → 加大；搜色太慢 → 减小 |
+| `SEARCH_FULL_ROTATION_TIME` | 10 s | 全场扫不完 → 加大 |
+| `MAX_VALID_AREA` | 80000 | 误检或换分辨率 |
+| HSV 六项 | 见 §4.3 | 识别不到颜色 |
+
+#### 返回值
+
+| 值 | 含义 |
+|----|------|
+| `True` | 检测到色块（面积 1~MAX_VALID_AREA） |
+| `False` | 超时未找到 |
 
 ---
 
-## 8. 开环运动函数
+## 8. approach_target(color, forward_speed, pid_params, stop_pixels) → bool
 
-不依赖视觉，按时间或编码器执行。执行完自动 `stop()`。
-
-### turn_left(duration, wheel_speed)
-
-逆时针原地转，持续 `duration` 秒。
+**功能：** PID 控制左右轮差速，直行靠近色块；`pixel_count >= stop_pixels` 时停车。
 
 ```python
-turn_left(0.2, 60)   # 左转 0.2 秒，轮速 60
+approach_target("blue", 28, pid_approach, stop_pixels=15000)
 ```
 
-### turn_right(duration, wheel_speed)
+#### 传参（main 里常改）
 
-顺时针原地转。
+| 参数 | 说明 | 典型值 / 标定 |
+|------|------|----------------|
+| `color` | 要跟的颜色 | 与 `search_color` 一致 |
+| `forward_speed` | 前进基础 PWM（左右同向） | 22~32；太快易晃、冲过头 |
+| `pid_params` | `PidParams` 或 `(kp,ki,kd)` | 见 §5 |
+| `stop_pixels` | 轮廓面积达到即停 | debug 看 `px=`，蓝/黄/红可不同 |
 
-```python
-turn_right(0.2, 60)
-```
+#### Config（不常改）
+
+| 字段 | 默认 | 何时改 |
+|------|------|--------|
+| `APPROACH_TIMEOUT` | 15 s | 靠近总超时 |
+| `APPROACH_LOST_BACKUP_FRAMES` | 10 | 丢目标后倒车 retry 次数 |
+| `MAX_VALID_AREA` | 80000 | 贴太近误检消失 |
+| HSV | 见 §4.3 | 靠近时丢色 |
+
+**PidParams 传参（和 Config 无关）：** `min_delta` / `max_delta` 在 `PidParams(...)` 里设，控制转向死区与上限。
+
+#### 丢目标行为
+
+连续 `det is None`：先 `-forward_speed*0.5` 倒车；超过 `APPROACH_LOST_BACKUP_FRAMES` 帧 → 返回 `False`。
+
+#### 返回值
+
+| 值 | 含义 |
+|----|------|
+| `True` | 到达 `stop_pixels` |
+| `False` | 超时或丢失过久 |
+
+---
+
+## 9. 开环 / 编码器运动 API
+
+不依赖视觉；执行完自动 `stop()`。
+
+### turn_left(duration, wheel_speed) / turn_right(duration, wheel_speed)
+
+**功能：** 定时原地转；**不读编码器**，角度靠标定 `duration` + `wheel_speed`。
+
+#### 传参（main 里常改）
+
+| 参数 | 说明 | 典型值 |
+|------|------|--------|
+| `duration` | 转动秒数 | 0.15~0.25 约 90°（需实测） |
+| `wheel_speed` | 左右差速大小 | 40~60 |
+
+#### Config
+
+仅 `SWAP_WHEELS` / `INVERT_*` 影响方向；无专用转弯 Config。
+
+---
 
 ### forward_time(left_speed, right_speed, duration)
 
-按给定左右轮速度行驶一段时间。
+**功能：** 定时差速行驶；可前进、后退、弧线、原地转。
 
-```python
-forward_time(50, 50, 0.8)    # 直行前进
-forward_time(-25, -25, 0.8)  # 直行后退
-forward_time(20, -20, 0.5)   # 原地旋转
-```
+#### 传参（main 里常改）
 
-### forward_pid(left_speed, right_speed, step, interval, duration)
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `left_speed` | 左轮 PWM，可负 | `50` / `-25` |
+| `right_speed` | 右轮 PWM，可负 | `50` / `-25` |
+| `duration` | 秒数 | `0.8` |
 
-**霍尔编码器闭环直行**：每隔 `interval` 读左右轮转速，左快则左减右加，保持直线。
+#### Config
 
-```python
-forward_pid(40, 40, step=0.5, interval=0.05, duration=0.8)
-```
-
-| 参数 | 说明 |
-|------|------|
-| `left_speed`, `right_speed` | 初始 PWM |
-| `step` | 每次修正步长（如 0.2 ~ 0.5） |
-| `interval` | 修正间隔（秒，如 0.01 ~ 0.05） |
-| `duration` | 总行驶时间（秒） |
-
-适合长距离直行；短距离可用 `forward_time`。
+`SWAP_WHEELS` / `INVERT_*`；无其它专用项。
 
 ---
 
-## 9. 函数一览
+### forward_pid(left_speed, right_speed, step, interval, duration)
+
+**功能：** 按**时间**直行；每隔 `interval` 读霍尔脉冲增量，用 `step` 修正左右同步。**不按厘米停**。
+
+```python
+forward_pid(40, 40, 0.5, 0.05, 0.8)
+```
+
+#### 传参（main 里常改）
+
+| 参数 | 说明 | 典型值 |
+|------|------|--------|
+| `left_speed` / `right_speed` | 初始 PWM | 常左右相同，如 40, 40 |
+| `step` | 每周期修正步长 | 0.2~0.5；越大纠偏越猛 |
+| `interval` | 修正周期（秒） | 0.01~0.05 |
+| `duration` | 总时长（秒） | 按赛道标定 |
+
+#### Config（不常改）
+
+| 字段 | 默认 | 何时改 |
+|------|------|--------|
+| `LEFT_ENCODER` / `RIGHT_ENCODER` | 6 / 12 | 接线 |
+| `ENCODER_PULSES_PER_REV` | 585 | 极少改 |
+| `FORWARD_PID_INTERVAL` | 0.01 | v4 内部采样参考 |
+
+---
+
+## 10. 函数一览
 
 | 函数 | 类型 | 简要说明 |
 |------|------|----------|
@@ -263,7 +338,7 @@ forward_pid(40, 40, step=0.5, interval=0.05, duration=0.8)
 
 ---
 
-## 10. 典型比赛流程（参考 __main__）
+## 11. 典型比赛流程（参考 __main__）
 
 文件末尾 `if __name__ == "__main__"` 是一段完整绕桩示例，逻辑如下：
 
@@ -294,22 +369,24 @@ approach_target("yellow", 28, pid_approach, stop_pixels=15000)
 
 ---
 
-## 11. 临场标定清单
+## 12. 临场标定清单
 
-| 标定项 | 怎么标 | 改哪里 |
-|--------|--------|--------|
-| HSV 颜色 | 运行 `HSV_test.py` 看 mask | `Config` 的 `LOW_*` / `HIGH_*` |
-| 搜色步进 | 调 `right_pwm`、`interval` 使每步能扫到新区域且不太冲 | `search_color` 参数 |
-| 搜色停车等待 | 画面糊就加长，步数少就缩短 | `SEARCH_COLOR_SETTLE_TIME` |
-| 搜色总超时 | 全场扫不完就加大 | `SEARCH_FULL_ROTATION_TIME` |
-| 靠近停止距离 | debug 窗口看 `px=` | `stop_pixels` 参数 |
-| 转弯角度 | 在地板上量 90° / 45° 对应 `duration` + `wheel_speed` | `turn_left` / `turn_right` |
-| 直行距离 | 量一段赛道长度对应 `forward_pid` 的 `duration` | `forward_pid` 参数 |
-| 编码器直行 | 长直线是否跑偏，调 `step` | `forward_pid` 的 `step` |
+| 标定项 | 怎么标 | 传参 or Config |
+|--------|--------|----------------|
+| HSV 颜色 | `HSV_test.py` | **Config** `LOW_*` / `HIGH_*` |
+| 搜色步进 | 每步扫到新区域 | **传参** `right_pwm`、`interval` |
+| 搜色停车等待 | 画面稳不稳 | **Config** `SEARCH_COLOR_SETTLE_TIME` |
+| 搜色总超时 | 能否扫完一圈 | **Config** `SEARCH_FULL_ROTATION_TIME` |
+| 靠近停止距离 | debug 看 `px=` | **传参** `stop_pixels` |
+| PID 手感 | 抖/慢/冲 | **传参** `PidParams` |
+| 转弯角度 | 量 90° 对应时间 | **传参** `turn_left`/`turn_right` |
+| 直行距离 | 量赛道长度 | **传参** `forward_pid` 的 `duration` |
+| 直行走直 | 长距离跑偏 | **传参** `forward_pid` 的 `step` |
+| 电机方向 | 前进变后退 | **Config** `SWAP_WHEELS` / `INVERT_*` |
 
 ---
 
-## 12. 调试画面
+## 13. 调试画面
 
 `SHOW_DEBUG=True` 时，窗口显示：
 
@@ -322,7 +399,7 @@ approach_target("yellow", 28, pid_approach, stop_pixels=15000)
 
 ---
 
-## 13. 常见问题
+## 14. 常见问题
 
 **Q: 提示「请先调用 setup()」**  
 A: 在调用任何动作函数前先 `setup()`。
