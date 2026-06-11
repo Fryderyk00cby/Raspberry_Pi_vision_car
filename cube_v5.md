@@ -8,6 +8,27 @@
 
 ---
 
+## 目录
+
+- [1. v5 相对 v4 的变更摘要](#1-v5-相对-v4-的变更摘要)
+- [2. 传参 vs Config：改哪里？](#2-传参-vs-config改哪里)
+- [3. v5 专有 Config（编码器距离/角度）](#3-v5-专有-config编码器距离角度)
+- [4. 基本用法模板](#4-基本用法模板)
+- [5. 生命周期 API](#5-生命周期-api)
+- [6. search_color](#6-search_colorwheel_pwm-interval-color-use_left_wheelfalse--bool)
+- [7. approach_target](#7-approach_targetcolor-forward_speed-pid_params-stop_pixels--bool)
+- [8. approach_target_brake](#8-approach_target_brake--bool-v5-新增)
+- [9. approach_target_recover](#9-approach_target_recover--bool-v5-新增)
+- [10. drive_distance](#10-drive_distancedist_cm-speed-step-v5-新增)
+- [11. turn_angle](#11-turn_angleangle_deg-speed-step-v5-新增)
+- [12. 开环 / 按时间编码器 API](#12-开环--按时间编码器-api与-v4-相同)
+- [13. 函数一览](#13-函数一览)
+- [14. 典型比赛流程](#14-典型比赛流程参考-__main__)
+- [15. v5 临场标定清单](#15-v5-临场标定清单)
+- [16. 常见问题](#16-常见问题v5-补充)
+
+---
+
 ## 1. v5 相对 v4 的变更摘要
 
 | 项目 | v4 | v5 |
@@ -104,7 +125,7 @@ search_color(40, 0.3, "blue")                           # 右轮（默认）
 search_color(-40, 0.3, "yellow", use_left_wheel=True)   # 左轮
 ```
 
-#### 传参（main 里常改）
+### 传参（main 里常改）
 
 | 参数 | 说明 | 典型值 |
 |------|------|--------|
@@ -113,7 +134,7 @@ search_color(-40, 0.3, "yellow", use_left_wheel=True)   # 左轮
 | `color` | 目标色 | blue / yellow / red |
 | `use_left_wheel` | False=右轮驱动；True=左轮驱动 | 扫不到时切换 |
 
-#### Config（不常改）
+### Config（不常改）
 
 | 字段 | 默认 | 何时改 |
 |------|------|--------|
@@ -121,7 +142,7 @@ search_color(-40, 0.3, "yellow", use_left_wheel=True)   # 左轮
 | `SEARCH_FULL_ROTATION_TIME` | 10 s | 扫不完 → 加大 |
 | `MAX_VALID_AREA` + HSV | 见 v4 §4 | 误检 / 认不出色 |
 
-#### 返回值
+### 返回值
 
 | 值 | 含义 |
 |----|------|
@@ -157,7 +178,7 @@ approach_target_brake(
 
 **签名：** `approach_target_brake(color, forward_speed, pid_params, stop_pixels, brake_speed, brake_pixel)`
 
-#### 传参（main 里常改）
+### 传参（main 里常改）
 
 | 参数 | 说明 | 标定建议 |
 |------|------|----------|
@@ -168,13 +189,13 @@ approach_target_brake(
 | `brake_speed` | 第二段较慢 PWM | 约为 `forward_speed` 的 40%~60% |
 | `brake_pixel` | 开始减速的面积 | 约为 `stop_pixels` 的 50%~70% |
 
-#### Config（不常改）
+### Config（不常改）
 
 与 `approach_target` 相同：`APPROACH_TIMEOUT`、`APPROACH_LOST_BACKUP_FRAMES`、HSV、`MAX_VALID_AREA`。
 
 **注意：** 无丢目标恢复；需要恢复请用 `approach_target_recover` 或自行写逻辑。
 
-#### 返回值
+### 返回值
 
 | 值 | 含义 |
 |----|------|
@@ -205,13 +226,13 @@ approach_target_recover(
 )
 ```
 
-#### 传参 — 靠近段（与 approach_target 相同，常改）
+### 传参 — 靠近段（与 approach_target 相同，常改）
 
 | 参数 | 说明 |
 |------|------|
 | `color`, `forward_speed`, `pid_params`, `stop_pixels` | 同 `approach_target` |
 
-#### 传参 — 恢复段（有默认值，赛段需要时再改）
+### 传参 — 恢复段（有默认值，赛段需要时再改）
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
@@ -223,7 +244,7 @@ approach_target_recover(
 | `search_interval` | 0.3 | 恢复搜色每步时长 |
 | `use_left_wheel` | False | 恢复搜色用左轮或右轮 |
 
-#### Config（不常改）
+### Config（不常改）
 
 | 字段 | 影响 |
 |------|------|
@@ -234,7 +255,7 @@ approach_target_recover(
 
 后退段内部用 `forward_pid`，还受 `FORWARD_PID_INTERVAL`、编码器引脚等 v4 Config 影响。
 
-#### 返回值
+### 返回值
 
 | 值 | 含义 |
 |----|------|
@@ -252,7 +273,7 @@ drive_distance(30, 40, 0.2)    # 前进约 30 cm
 drive_distance(-20, 35, 0.2)   # 后退约 20 cm
 ```
 
-#### 传参（main 里常改）
+### 传参（main 里常改）
 
 | 参数 | 说明 | 典型值 |
 |------|------|--------|
@@ -260,7 +281,7 @@ drive_distance(-20, 35, 0.2)   # 后退约 20 cm
 | `speed` | PWM **幅度（传正数）**；方向由 `dist_cm` 符号决定 | 35~45 |
 | `step` | 每控制周期左右同步修正步长 | 0.2~0.5 |
 
-#### Config（现场标定，不常改）
+### Config（现场标定，不常改）
 
 | 字段 | 作用 |
 |------|------|
@@ -273,7 +294,7 @@ drive_distance(-20, 35, 0.2)   # 后退约 20 cm
 | `ENCODER_PULSES_PER_REV` | 脉冲密度 |
 | `LEFT_ENCODER` / `RIGHT_ENCODER` | 接线 |
 
-#### 与 forward_pid 对比
+### 与 forward_pid 对比
 
 | | `drive_distance` | `forward_pid` |
 |--|------------------|---------------|
@@ -292,7 +313,7 @@ turn_angle(90, 50, 0.2)     # 左转 90°
 turn_angle(-75, 45, 0.2)    # 右转 75°
 ```
 
-#### 传参（main 里常改）
+### 传参（main 里常改）
 
 | 参数 | 说明 | 典型值 |
 |------|------|--------|
@@ -300,7 +321,7 @@ turn_angle(-75, 45, 0.2)    # 右转 75°
 | `speed` | 转弯 PWM 幅度（正数） | 40~55 |
 | `step` | 左右同步修正步长 | 0.2~0.5 |
 
-#### Config（现场标定，不常改）
+### Config（现场标定，不常改）
 
 | 字段 | 作用 |
 |------|------|

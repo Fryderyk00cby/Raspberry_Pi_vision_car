@@ -4,6 +4,27 @@
 
 依赖：OpenCV、NumPy、树莓派上的 RPi.GPIO（非树莓派环境会自动进入 DRY_RUN，只打印电机指令）。
 
+> v5 增强版（编码器按厘米/角度、减速靠近、丢目标恢复等）见 **[cube_v5.md](./cube_v5.md)**。
+
+---
+
+## 目录
+
+- [1. 基本用法模板](#1-基本用法模板)
+- [2. 速度参数约定](#2-速度参数约定)
+- [3. 传参 vs Config：改哪里？](#3-传参-vs-config改哪里)
+- [4. Config 总表](#4-config-总表按用途分类)
+- [5. PidParams（PID 参数）](#5-pid-参数-pidparams传给-approach_target不算-config)
+- [6. 生命周期 API](#6-生命周期-api)
+- [7. search_color](#7-search_colorright_pwm-interval-color--bool)
+- [8. approach_target](#8-approach_targetcolor-forward_speed-pid_params-stop_pixels--bool)
+- [9. 开环 / 编码器运动 API](#9-开环--编码器运动-api)
+- [10. 函数一览](#10-函数一览)
+- [11. 典型比赛流程](#11-典型比赛流程参考-__main__)
+- [12. 临场标定清单](#12-临场标定清单)
+- [13. 调试画面](#13-调试画面)
+- [14. 常见问题](#14-常见问题)
+
 ---
 
 ## 1. 基本用法模板
@@ -189,7 +210,7 @@ pid_approach = PidParams(kp=0.18, ki=0.0, kd=0.012, min_delta=8, max_delta=12)
 search_color(-40, 0.3, "yellow")
 ```
 
-#### 传参（main 里常改）
+### 传参（main 里常改）
 
 | 参数 | 说明 | 典型值 / 标定 |
 |------|------|----------------|
@@ -197,7 +218,7 @@ search_color(-40, 0.3, "yellow")
 | `interval` | 每步转动时长（秒） | 0.12~0.3 |
 | `color` | 目标颜色 | `"blue"` / `"yellow"` / `"red"` |
 
-#### Config（不常改）
+### Config（不常改）
 
 | 字段 | 默认 | 何时改 |
 |------|------|--------|
@@ -206,7 +227,7 @@ search_color(-40, 0.3, "yellow")
 | `MAX_VALID_AREA` | 80000 | 误检或换分辨率 |
 | HSV 六项 | 见 §4.3 | 识别不到颜色 |
 
-#### 返回值
+### 返回值
 
 | 值 | 含义 |
 |----|------|
@@ -223,7 +244,7 @@ search_color(-40, 0.3, "yellow")
 approach_target("blue", 28, pid_approach, stop_pixels=15000)
 ```
 
-#### 传参（main 里常改）
+### 传参（main 里常改）
 
 | 参数 | 说明 | 典型值 / 标定 |
 |------|------|----------------|
@@ -232,7 +253,7 @@ approach_target("blue", 28, pid_approach, stop_pixels=15000)
 | `pid_params` | `PidParams` 或 `(kp,ki,kd)` | 见 §5 |
 | `stop_pixels` | 轮廓面积达到即停 | debug 看 `px=`，蓝/黄/红可不同 |
 
-#### Config（不常改）
+### Config（不常改）
 
 | 字段 | 默认 | 何时改 |
 |------|------|--------|
@@ -243,11 +264,11 @@ approach_target("blue", 28, pid_approach, stop_pixels=15000)
 
 **PidParams 传参（和 Config 无关）：** `min_delta` / `max_delta` 在 `PidParams(...)` 里设，控制转向死区与上限。
 
-#### 丢目标行为
+### 丢目标行为
 
 连续 `det is None`：先 `-forward_speed*0.5` 倒车；超过 `APPROACH_LOST_BACKUP_FRAMES` 帧 → 返回 `False`。
 
-#### 返回值
+### 返回值
 
 | 值 | 含义 |
 |----|------|
