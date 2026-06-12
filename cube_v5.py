@@ -70,7 +70,7 @@ class Config:
     TURN_CALIB: float = 0.9
     ENC_FINISH_PULSES: int = 4
     ENC_TIMEOUT_S: float = 6.0
-    ENC_LOOP_INTERVAL: float = 0.005
+    ENC_LOOP_INTERVAL: float = 0.01
     ENC_SWAP: bool = False
     ENC_DRY_CM_PER_SEC: float = 35.0
 
@@ -985,7 +985,7 @@ def forward_pid(
     _, _, car = _require_ready()
     left = float(left_speed)
     right = float(right_speed)
-    interval = max(0.005, float(interval))
+    interval = max(0.01, float(interval))
     step = max(0.0, float(step))
 
     print(
