@@ -31,8 +31,8 @@
 | 颜色识别 | HSV 阈值检测蓝 / 黄 / 红魔方，支持最大轮廓筛选 |
 | 视觉闭环 | `search_color` 步进搜色、`approach_target` PID 靠近色块 |
 | 开环运动 | `turn_left` / `turn_right` 定时转弯、`forward_time` 定时差速 |
-| 编码器闭环 | `forward_pid` 按时间直行；**v5** 另提供 `turn_angle` 按角度转弯 |
-| v5 增强 | 左/右轮搜色、减速靠近、丢目标自动恢复、编码器按角度转弯 |
+| 编码器闭环 | `forward_pid` 按时间直行，`turn_angle` 按角度转弯（v4/v5 均支持） |
+| v5 增强 | 左/右轮搜色、减速靠近、丢目标自动恢复 |
 | 调试支持 | `cv2.imshow` 实时画面、`dry_run` 模式（无 GPIO 时只打印电机指令） |
 | 临场标定 | 独立脚本 `HSV_test.py` 调 HSV 阈值 |
 
@@ -61,6 +61,7 @@
 Raspberry_Pi_vision_car/
 ├── cube_v4.py      # 主函数库（稳定版）
 ├── cube_v5.py      # v4 增强版（推荐新项目使用）
+├── 2026_task/      # 2026 版电子系统导论课程项目规则实现示例代码（参考用）
 ├── HSV_test.py     # HSV 颜色临场标定工具
 ├── cube_v4.md      # v4 完整 API：每个函数的传参 / Config 说明
 ├── cube_v5.md      # v5 完整 API：含 turn_angle 与新增闭环
@@ -71,23 +72,28 @@ Raspberry_Pi_vision_car/
 
 | 版本 | 适用场景 |
 |------|----------|
-| **`cube_v4.py`** | 流程简单，开环转弯 + `forward_pid` 按时间直行即可 |
-| **`cube_v5.py`** | 需要按角度转弯、减速靠近、丢目标恢复、左/右轮搜色 |
+| **`cube_v4.py`** | 通用稳定版：已包含 `turn_angle`、`forward_pid`、`search_color`、`approach_target` |
+| **`cube_v5.py`** | 在 v4 基础上增加：`approach_target_brake`、`approach_target_recover`、`search_color(..., use_left_wheel=...)` |
 
 ### v5 相比 v4
 
 | 项目 | v4 | v5 |
 |------|----|----|
-| `search_color` | 仅右轮（参数名 `right_pwm`） | 默认右轮；`use_left_wheel=True` 可选左轮 |
+| `search_color` | `search_color(right_pwm, interval, color)`（右轮步进） | `search_color(wheel_pwm, interval, color, use_left_wheel=False)`（可选左/右轮） |
 | 减速靠近 | 无 | `approach_target_brake` |
 | 丢目标恢复 | 无 | `approach_target_recover` |
-| 按角度转弯 | 无 | `turn_angle`（编码器脉冲闭环） |
-| 编码器 | 后台读速线程 | GPIO 回调累计脉冲（无后台线程） |
+| 其余核心能力 | 与 v5 共享（`turn_angle`、`forward_pid`、`approach_target` 等） | 与 v4 共享 |
 
 **详细 API 文档：**
 
 - v4：**[cube_v4.md](./cube_v4.md)** — 全部公开 API、Config 总表、传参 vs Config 说明
 - v5：**[cube_v5.md](./cube_v5.md)** — v5 新增 API 与编码器 Config（`TURN_CALIB` 等）
+
+### 关于 `2026_task`
+
+- `2026_task/` 是 **2026 版本电子系统导论课程**项目规则实现示例代码目录（供参考）。
+- `2026_task` 的实现应沿用当前 `cube_v4.py` 的核心代码框架（同一套基础函数与控制逻辑），主要差异在赛道/路线参数与流程拼接。
+- 目录下 `adapt_LL/LR/MM/RL/RR` 是不同路线适配样例，可按赛道选择与微调。
 
 ---
 
@@ -216,12 +222,12 @@ python3 cube_v5.py
 | `approach_target` | v4/v5 | 视觉 | `color`, `forward_speed`, `pid`, `stop_pixels` | `APPROACH_*`, HSV |
 | `approach_target_brake` | **v5** | 视觉 | + `brake_speed`, `brake_pixel` | 同 approach |
 | `approach_target_recover` | **v5** | 视觉 | + `backup_*`, `search_*` | 同 approach + search |
-| `turn_angle` | **v5** | 编码器 | `angle_deg`（可选 `speed`,`step`） | `TURN_CALIB`, 轮距, `ENC_*` |
+| `turn_angle` | v4/v5 | 编码器 | `angle_deg`（可选 `speed`,`step`） | `TURN_CALIB`, 轮距, `ENC_*` |
 | `turn_left` / `turn_right` | v4/v5 | 开环 | `duration`, `wheel_speed` | 电机方向 |
 | `forward_time` | v4/v5 | 开环 | `left`, `right`, `duration` | 电机方向 |
 | `forward_pid` | v4/v5 | 编码器 | `left`, `right`, `step`, `interval`, `duration` | 编码器引脚 |
 
-**速度约定：** 所有速度为 PWM 占空比，范围 **-100 ~ 100**；负值表示该轮反转。`turn_angle` 的 `speed` 传正数，方向由 `angle_deg` 符号决定。
+**速度约定：** 所有速度为 PWM 占空比，范围 **-100 ~ 100**；负值表示该轮反转。`turn_angle`（v4/v5）里 `speed` 传正数，方向由 `angle_deg` 符号决定。
 
 ---
 
@@ -239,7 +245,7 @@ python3 cube_v5.py
 
 ---
 
-## 临场标定清单
+## 可能需要根据实际环境修改的固定参数
 
 | 标定项 | 方法 | 传参 or Config |
 |--------|------|----------------|
@@ -250,10 +256,10 @@ python3 cube_v5.py
 | PID 手感 | 抖/慢/冲 | **传参** `PidParams` |
 | 转弯（开环） | 量 90° 对应时长 | **传参** `turn_left` / `turn_right` |
 | 直行（按时间） | 量赛道段长度 | **传参** `forward_pid` 的 `duration`、`step` |
-| 转弯（按角度） | **v5** `turn_angle(90,...)` 量实际角度 | **传参** `angle_deg`；**Config** `TURN_CALIB`、`TRACK_WIDTH_CM` |
-| 停点过冲 | **v5** 到位仍滑 | **Config** `ENC_FINISH_PULSES` |
+| 转弯（按角度） | v4/v5 `turn_angle(90)` 量实际角度 | **传参** `angle_deg`；**Config** `TURN_CALIB`、`TRACK_WIDTH_CM` |
+| 停点过冲 | v4/v5 到位仍滑 | **Config** `ENC_FINISH_PULSES` |
 | 电机方向 | 前进变后退 | **Config** `SWAP_WHEELS` / `INVERT_*` |
-| 编码器左右反 | **v5** 距离/角度符号怪 | **Config** `ENC_SWAP` |
+| 编码器左右反 | v4/v5 距离/角度符号怪 | **Config** `ENC_SWAP` |
 
 完整分表见 [cube_v4.md §12](./cube_v4.md)、[cube_v5.md §14](./cube_v5.md)。
 
@@ -265,7 +271,7 @@ python3 cube_v5.py
 - 比赛脚本建议用 `try / except KeyboardInterrupt / finally: cleanup()` 包裹，避免异常时电机不停。
 - 红色在 HSV 中跨越 0° 与 180°，需分别配置 `RED1` 与 `RED2` 两段阈值。
 - 非树莓派环境无法使用真实 GPIO，适合离线调试视觉与流程逻辑。
-- v5 的 `turn_angle` 依赖轮径、轮距与 `TURN_CALIB`，首次上车务必在地面标定后再写比赛流程。
+- v4/v5 的 `turn_angle` 都依赖轮径、轮距与 `TURN_CALIB`，首次上车务必在地面标定后再写比赛流程。
 
 ---
 
