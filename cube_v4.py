@@ -18,6 +18,7 @@
       3) 无图形界面时：可把 SHOW_DEBUG 关掉，仅用 print 日志；或自行加 mjpg-streamer 等推流。
 """
 
+import math
 import time
 import threading
 from dataclasses import dataclass
@@ -62,6 +63,15 @@ class Config:
     RIGHT_ENCODER: int = 12
     ENCODER_PULSES_PER_REV: float = 585.0
     FORWARD_PID_INTERVAL: float = 0.01
+    # turn_angle 专用（首次上车按地面标定 TURN_CALIB / TRACK_WIDTH_CM）
+    WHEEL_DIAMETER_CM: float = 6.5
+    TRACK_WIDTH_CM: float = 14.0
+    TURN_CALIB: float = 0.5
+    ENC_FINISH_PULSES: int = 4
+    ENC_TIMEOUT_S: float = 6.0
+    ENC_LOOP_INTERVAL: float = 0.01
+    ENC_SWAP: bool = False
+    ENC_DRY_TURN_DEG_PER_SEC: float = 90.0
 
     SWAP_WHEELS: bool = False
     INVERT_LEFT: bool = False
@@ -83,7 +93,7 @@ class Config:
     # search_color 总搜索超时（秒）
     SEARCH_FULL_ROTATION_TIME: float = 10
     # search_color：每步停车后等待画面稳定再识别（秒）
-    SEARCH_COLOR_SETTLE_TIME: float = 0.5
+    SEARCH_COLOR_SETTLE_TIME: float = 0.3
 
     APPROACH_LOST_BACKUP_FRAMES: int = 10
     APPROACH_TIMEOUT: float = 15.0
@@ -406,6 +416,9 @@ class WheelEncoder:
         self.rcounter = 0
         self.lspeed = 0.0
         self.rspeed = 0.0
+        self._count_left = 0
+        self._count_right = 0
+        self._lock = threading.Lock()
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self._enabled = False
@@ -421,9 +434,22 @@ class WheelEncoder:
 
     def _on_left(self, _channel: int) -> None:
         self.lcounter += 1
+        with self._lock:
+            self._count_left += 1
 
     def _on_right(self, _channel: int) -> None:
         self.rcounter += 1
+        with self._lock:
+            self._count_right += 1
+
+    def reset(self) -> None:
+        with self._lock:
+            self._count_left = 0
+            self._count_right = 0
+
+    def read(self) -> Tuple[int, int]:
+        with self._lock:
+            return self._count_left, self._count_right
 
     def start(self) -> None:
         self.running = True
@@ -453,6 +479,91 @@ class WheelEncoder:
             except Exception:
                 pass
             self._enabled = False
+
+
+def _wheel_counts() -> Tuple[int, int]:
+    """与 Car.drive(left, right) 一致的软件左右累计脉冲。"""
+    if _encoder is None:
+        return 0, 0
+    pl, pr = _encoder.read()
+    if CFG.ENC_SWAP:
+        return pr, pl
+    return pl, pr
+
+
+def _pulses_for_turn(angle_deg: float) -> float:
+    wheel_circ = math.pi * CFG.WHEEL_DIAMETER_CM
+    turn_circ = math.pi * CFG.TRACK_WIDTH_CM
+    wheel_travel = turn_circ * (abs(angle_deg) / 360.0)
+    revs = wheel_travel / wheel_circ
+    return revs * CFG.ENCODER_PULSES_PER_REV * CFG.TURN_CALIB
+
+
+def _run_turn_to_target(
+    target_pulses: float,
+    base_left: float,
+    base_right: float,
+    step: float,
+    label: str,
+    *,
+    dry_angle_deg: Optional[float] = None,
+) -> None:
+    """turn_angle 内部：编码器脉冲闭环转到目标。"""
+    _, _, car = _require_ready()
+    target = max(0.0, float(target_pulses))
+    step = max(0.0, float(step))
+    finish = CFG.ENC_FINISH_PULSES
+    interval = max(0.002, CFG.ENC_LOOP_INTERVAL)
+
+    print(f"[ENC] {label}: target={target:.0f} pulses, step={step}")
+
+    if _encoder is None or _encoder.dry:
+        if dry_angle_deg is not None:
+            duration = max(0.05, abs(dry_angle_deg) / CFG.ENC_DRY_TURN_DEG_PER_SEC)
+        else:
+            duration = max(0.1, target / CFG.ENCODER_PULSES_PER_REV * 0.5)
+        print(f"[ENC] dry run {label}: {duration:.2f}s")
+        car.drive(base_left, base_right)
+        time.sleep(duration)
+        car.stop()
+        time.sleep(0.06)
+        return
+
+    _encoder.reset()
+    left = float(base_left)
+    right = float(base_right)
+    t0 = now()
+
+    while True:
+        if now() - t0 > CFG.ENC_TIMEOUT_S:
+            print(f"[ENC] {label} timeout, stop early")
+            break
+
+        cl, cr = _wheel_counts()
+        done_l = cl >= target - finish
+        done_r = cr >= target - finish
+        if done_l and done_r:
+            break
+
+        if cl > cr:
+            left -= step
+            right += step
+        elif cl < cr:
+            left += step
+            right -= step
+
+        if done_l:
+            left = 0.0
+        if done_r:
+            right = 0.0
+
+        car.drive(clamp(left, -100, 100), clamp(right, -100, 100))
+        time.sleep(interval)
+
+    car.stop()
+    cl, cr = _wheel_counts()
+    print(f"[ENC] {label} done: L={cl} R={cr} dt={now() - t0:.2f}s")
+    time.sleep(0.06)
 
 
 # =============================================================================
@@ -671,9 +782,36 @@ def approach_target(
     return False
 
 
+def turn_angle(angle_deg: float, speed: float = 50, step: float = 0.2) -> None:
+    """
+    编码器闭环原地转指定角度（v4+ 新增，setup 后直接调用）。
+
+    参数：
+        angle_deg: 角度（度）。正=左转，负=右转
+        speed:     轮速 PWM 幅度，默认 50
+        step:      左右同步修正步长，默认 0.2
+
+    示例（复制即用）：
+        turn_angle(90)     # 左转 90°
+        turn_angle(-90)    # 右转 90°
+        turn_angle(45, 45) # 左转 45°，稍慢
+    """
+    angle_deg = float(angle_deg)
+    s = clamp(abs(float(speed)), 0, 100)
+    target = _pulses_for_turn(angle_deg)
+    if angle_deg >= 0:
+        _run_turn_to_target(
+            target, -s, s, step, f"turnL {angle_deg:.0f}deg", dry_angle_deg=angle_deg
+        )
+    else:
+        _run_turn_to_target(
+            target, s, -s, step, f"turnR {-angle_deg:.0f}deg", dry_angle_deg=angle_deg
+        )
+
+
 def turn_left(duration: float, wheel_speed: float) -> None:
     """
-    逆时针原地旋转（左转），持续 duration 秒。
+    逆时针原地旋转（左转），持续 duration 秒（开环，与 turn_angle 二选一）。
 
     参数：
         duration: 执行时长（秒）
@@ -776,53 +914,7 @@ if __name__ == "__main__":
     pid_approach = PidParams(kp=0.18, ki=0.0, kd=0.012, min_delta=8, max_delta=12)
 
     try:
-        #find blue and turn left
-        time.sleep(0.5)
-        approach_target("blue", forward_speed=28, pid_params=pid_approach, stop_pixels=15000)
-        time.sleep(0.5)
-        turn_left(0.2,60)
-        time.sleep(0.5)
-        forward_pid(40,40,0.5,0.05,0.8)
-        time.sleep(0.5)
-        search_color(-40,0.3,"yellow")
-        time.sleep(0.5)
-        #find yellow and turn right
-        approach_target("yellow", forward_speed=28, pid_params=pid_approach, stop_pixels=15000)
-        time.sleep(0.5)
-        turn_right(0.2,60)
-        time.sleep(0.5)
-        forward_pid(40,40,0.5,0.05,0.8)
-        time.sleep(0.5)
-        search_color(40,0.3,"red")
-        time.sleep(0.5)
-        #find red and turn left
-        approach_target("red", forward_speed=28, pid_params=pid_approach, stop_pixels=6000)
-        time.sleep(0.5)
-        turn_left(0.2,60)
-        time.sleep(0.5)
-        forward_pid(40,40,0.5,0.01,0.8)
-        time.sleep(0.5)
-        search_color(40,0.3,"blue")
-        time.sleep(0.5)
-        #find blue and turn left
-        approach_target("blue", forward_speed=28, pid_params=pid_approach, stop_pixels=6000)
-        time.sleep(0.5)
-        turn_left(0.2,60)
-        time.sleep(0.5)
-        forward_pid(40,40,0.5,0.01,0.8)
-        time.sleep(0.5)
-        search_color(40,0.3,"red")
-        time.sleep(0.5)
-        #find red and sprint to the finish line
-        approach_target("red", forward_speed=28, pid_params=pid_approach, stop_pixels=15000)
-        time.sleep(0.5)
-        turn_right(0.2,60)
-        time.sleep(0.5)
-        forward_pid(40,40,0.5,0.01,0.8)
-        time.sleep(0.5)
-        turn_left(0.2,60)
-        time.sleep(0.5)
-        forward_pid(40,40,0.5,0.05,3)
+        #finish your code here
         cleanup()
     except KeyboardInterrupt:
         pass

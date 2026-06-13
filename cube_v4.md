@@ -105,7 +105,7 @@ finally:
 |------|------|----------|------|
 | `LEFT_PWM` / `RIGHT_PWM` 等 GPIO | 见代码 | 全部电机函数 | 电机接线，错则全车方向乱 |
 | `PWM_FREQ` | 80 | 全部电机 | PWM 频率 |
-| `LEFT_ENCODER` / `RIGHT_ENCODER` | 6 / 12 | `forward_pid` | 霍尔引脚 |
+| `LEFT_ENCODER` / `RIGHT_ENCODER` | 6 / 12 | `forward_pid`, `turn_angle` | 霍尔引脚 |
 | `ENCODER_PULSES_PER_REV` | 585 | `forward_pid` | 课件给定，一般不改 |
 | `SWAP_WHEELS` | False | 全部 `drive` | 左右命令对调 |
 | `INVERT_LEFT` / `INVERT_RIGHT` | False | 全部 `drive` | 单侧电机正反转对调 |
@@ -137,12 +137,25 @@ finally:
 | `MAX_VALID_AREA` | 80000 | `search_color`, `approach_target` | 轮廓过大当误检；换分辨率须缩放 |
 | `APPROACH_STOP_PIXELS` | 21000 | 文档参考值 | **实际停靠多用传参 `stop_pixels`** |
 | `SEARCH_FULL_ROTATION_TIME` | 10 s | `search_color` | 搜色总超时 |
-| `SEARCH_COLOR_SETTLE_TIME` | 0.5 s | `search_color` | 每步停车后等画面稳 |
+| `SEARCH_COLOR_SETTLE_TIME` | 0.3 s | `search_color` | 每步停车后等画面稳 |
 | `APPROACH_TIMEOUT` | 15 s | `approach_target` | 靠近单段最长时间 |
 | `APPROACH_LOST_BACKUP_FRAMES` | 10 | `approach_target` | 丢目标后倒车 retry 帧数 |
 | `APPROACH_MIN_DELTA` / `APPROACH_MAX_DELTA` | 6 / 18 | 未直接使用 | 请用 `PidParams` 里的同名项 |
 
 640×480 → 320×240 时轮廓面积约 ×0.25。
+
+### 4.5 turn_angle 角度闭环（v4+ 新增）
+
+| 字段 | 默认 | 关联 API | 说明 |
+|------|------|----------|------|
+| `WHEEL_DIAMETER_CM` | 6.5 | `turn_angle` | 车轮直径（cm） |
+| `TRACK_WIDTH_CM` | 14.0 | `turn_angle` | 两轮中心距（cm） |
+| `TURN_CALIB` | 0.5 | `turn_angle` | 角度修正：转不够加大，转过头减小 |
+| `ENC_FINISH_PULSES` | 4 | `turn_angle` | 提前停脉冲，吃惯性 |
+| `ENC_TIMEOUT_S` | 6.0 | `turn_angle` | 超时保护（打滑/卡死） |
+| `ENC_LOOP_INTERVAL` | 0.01 | `turn_angle` | 闭环控制周期 |
+| `ENC_SWAP` | False | `turn_angle` | 编码器左右对调 |
+| `ENC_DRY_TURN_DEG_PER_SEC` | 90.0 | `turn_angle` | DRY_RUN 下角速度估算 |
 
 ---
 
@@ -222,7 +235,7 @@ search_color(-40, 0.3, "yellow")
 
 | 字段 | 默认 | 何时改 |
 |------|------|--------|
-| `SEARCH_COLOR_SETTLE_TIME` | 0.5 s | 画面糊/帧率低 → 加大；搜色太慢 → 减小 |
+| `SEARCH_COLOR_SETTLE_TIME` | 0.3 s | 画面糊/帧率低 → 加大；搜色太慢 → 减小 |
 | `SEARCH_FULL_ROTATION_TIME` | 10 s | 全场扫不完 → 加大 |
 | `MAX_VALID_AREA` | 80000 | 误检或换分辨率 |
 | HSV 六项 | 见 §4.3 | 识别不到颜色 |
@@ -280,6 +293,36 @@ approach_target("blue", 28, pid_approach, stop_pixels=15000)
 ## 9. 开环 / 编码器运动 API
 
 不依赖视觉；执行完自动 `stop()`。
+
+### turn_angle(angle_deg, speed=50, step=0.2)
+
+**功能：** 编码器闭环原地转指定角度。正=左转，负=右转。
+
+```python
+turn_angle(90)              # 左转 90°（默认 speed=50, step=0.2）
+turn_angle(-90)             # 右转 90°
+turn_angle(45, 45)          # 左转 45°，稍慢
+```
+
+#### 传参（main 里常改）
+
+| 参数 | 说明 | 典型值 |
+|------|------|--------|
+| `angle_deg` | 角度（度）；正左负右 | 45 / 90 / -90 |
+| `speed` | 转弯 PWM 幅度（默认 50） | 40~60 |
+| `step` | 左右同步修正步长（默认 0.2） | 0.2~0.5 |
+
+#### Config（不常改）
+
+见 §4.5（`TURN_CALIB`、轮径轮距、`ENC_*`）。
+
+#### 推荐调参顺序（v4/v5 统一）
+
+1. 先调 `angle_deg`（目标角度本身）
+2. 再调 `step`（左右同步修正强度）
+3. 最后调 `TURN_CALIB`（系统性偏差补偿）
+
+有临时小角度微调需求时，再用 `turn_left` / `turn_right` 补一小段时间。
 
 ### turn_left(duration, wheel_speed) / turn_right(duration, wheel_speed)
 
@@ -352,6 +395,7 @@ forward_pid(40, 40, 0.5, 0.05, 0.8)
 | `show_debug` | 调试 | 刷新 imshow 窗口 |
 | `search_color` | 视觉闭环 | 右轮步进搜色 |
 | `approach_target` | 视觉闭环 | PID 靠近色块 |
+| `turn_angle` | 编码器闭环 | 按角度原地转（正左负右） |
 | `turn_left` | 开环 | 逆时针转 |
 | `turn_right` | 开环 | 顺时针转 |
 | `forward_time` | 开环 | 定时差速 |
@@ -364,9 +408,9 @@ forward_pid(40, 40, 0.5, 0.05, 0.8)
 文件末尾 `if __name__ == "__main__"` 是一段完整绕桩示例，逻辑如下：
 
 ```
-靠近蓝 → 左转 → 直行 → 搜黄 → 靠近黄 → 右转 → 直行 → 搜红 → ...
-→ 靠近红 → 左转 → 直行 → 搜蓝 → 靠近蓝 → 左转 → 直行 → 搜红
-→ 靠近红 → 右转 → 直行 → 左转 → 长直行冲线
+靠近蓝 → turn_angle 左转 → 直行 → turn_angle 右转 → 直行 → 搜黄 → ...
+→ 靠近黄 → turn_angle 右转 → 直行 → 搜红 → 靠近红 → turn_angle 左转
+→ ...（按赛道继续拼接）
 ```
 
 对应代码片段：
@@ -376,13 +420,13 @@ setup(dry_run=False, show_debug=True)
 pid_approach = PidParams(kp=0.18, ki=0.0, kd=0.012, min_delta=8, max_delta=12)
 
 # 第一段：已知蓝块在前方，直接靠近
-approach_target("blue", 28, pid_approach, stop_pixels=15000)
-turn_left(0.2, 60)
-forward_pid(40, 40, 0.5, 0.05, 0.8)
+approach_target("blue", 34, pid_approach, stop_pixels=8000)
+turn_angle(90)
+forward_pid(40, 40, 0.5, 0.05, 0.6)
 
 # 搜下一个颜色
 search_color(-40, 0.3, "yellow")
-approach_target("yellow", 28, pid_approach, stop_pixels=15000)
+approach_target("yellow", 34, pid_approach, stop_pixels=10000)
 # ... 后续同理
 ```
 
@@ -396,13 +440,15 @@ approach_target("yellow", 28, pid_approach, stop_pixels=15000)
 |--------|--------|----------------|
 | HSV 颜色 | `HSV_test.py` | **Config** `LOW_*` / `HIGH_*` |
 | 搜色步进 | 每步扫到新区域 | **传参** `right_pwm`、`interval` |
-| 搜色停车等待 | 画面稳不稳 | **Config** `SEARCH_COLOR_SETTLE_TIME` |
+| 搜色停车等待 | 画面稳不稳 | **Config** `SEARCH_COLOR_SETTLE_TIME`（默认 0.3） |
 | 搜色总超时 | 能否扫完一圈 | **Config** `SEARCH_FULL_ROTATION_TIME` |
 | 靠近停止距离 | debug 看 `px=` | **传参** `stop_pixels` |
 | PID 手感 | 抖/慢/冲 | **传参** `PidParams` |
-| 转弯角度 | 量 90° 对应时间 | **传参** `turn_left`/`turn_right` |
+| 转弯角度（闭环） | `turn_angle(90)` 量角度 | **传参** `angle_deg`；**Config** `TURN_CALIB` |
+| 转弯角度（开环） | 量 90° 对应时间 | **传参** `turn_left`/`turn_right` |
 | 直行距离 | 量赛道长度 | **传参** `forward_pid` 的 `duration` |
 | 直行走直 | 长距离跑偏 | **传参** `forward_pid` 的 `step` |
+| 编码器左右反 | 左右角度方向怪 | **Config** `ENC_SWAP` |
 | 电机方向 | 前进变后退 | **Config** `SWAP_WHEELS` / `INVERT_*` |
 
 ---
@@ -433,6 +479,9 @@ A: 可能 stop_pixels 过大/过小，或 forward_speed 太快；降低速度或
 
 **Q: 车走不直**  
 A: 短距离用 `forward_time`；长距离用 `forward_pid` 并标定 `step`。
+
+**Q: turn_angle 转角不准**  
+A: 推荐顺序：先调 `angle_deg`，再调 `step`，最后调 `TURN_CALIB`。若左右对不上，先试 `ENC_SWAP`；再检查 `WHEEL_DIAMETER_CM` / `TRACK_WIDTH_CM`。
 
 **Q: 在 Windows 上 import 报错 GPIO**  
 A: 正常，会自动 DRY_RUN；要测识别请 `setup(dry_run=True)` 并接摄像头。

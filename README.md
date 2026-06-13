@@ -173,7 +173,7 @@ pid = PidParams(kp=0.18, ki=0.0, kd=0.012, min_delta=8, max_delta=12)
 
 try:
     approach_target_recover("blue", 28, pid, stop_pixels=15000)
-    turn_angle(90, 50, 0.2)          # 传参：角度、速度、step
+    turn_angle(90)                   # 默认 speed=50, step=0.2
     forward_pid(40, 40, 0.5, 0.05, 0.8)
 
     if search_color(-40, 0.3, "yellow"):
@@ -216,7 +216,7 @@ python3 cube_v5.py
 | `approach_target` | v4/v5 | 视觉 | `color`, `forward_speed`, `pid`, `stop_pixels` | `APPROACH_*`, HSV |
 | `approach_target_brake` | **v5** | 视觉 | + `brake_speed`, `brake_pixel` | 同 approach |
 | `approach_target_recover` | **v5** | 视觉 | + `backup_*`, `search_*` | 同 approach + search |
-| `turn_angle` | **v5** | 编码器 | `angle_deg`, `speed`, `step` | `TURN_CALIB`, 轮距, `ENC_*` |
+| `turn_angle` | **v5** | 编码器 | `angle_deg`（可选 `speed`,`step`） | `TURN_CALIB`, 轮距, `ENC_*` |
 | `turn_left` / `turn_right` | v4/v5 | 开环 | `duration`, `wheel_speed` | 电机方向 |
 | `forward_time` | v4/v5 | 开环 | `left`, `right`, `duration` | 电机方向 |
 | `forward_pid` | v4/v5 | 编码器 | `left`, `right`, `step`, `interval`, `duration` | 编码器引脚 |

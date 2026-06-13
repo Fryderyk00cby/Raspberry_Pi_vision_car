@@ -66,11 +66,12 @@ class Config:
 
     WHEEL_DIAMETER_CM: float = 6.5
     TRACK_WIDTH_CM: float = 14.0
-    TURN_CALIB: float = 0.9
+    TURN_CALIB: float = 0.5
     ENC_FINISH_PULSES: int = 4
     ENC_TIMEOUT_S: float = 6.0
     ENC_LOOP_INTERVAL: float = 0.01
     ENC_SWAP: bool = False
+    ENC_DRY_TURN_DEG_PER_SEC: float = 90.0
 
     SWAP_WHEELS: bool = False
     INVERT_LEFT: bool = False
@@ -467,19 +468,21 @@ def _wheel_counts() -> Tuple[int, int]:
 def _pulses_for_turn(angle_deg: float) -> float:
     wheel_circ = math.pi * CFG.WHEEL_DIAMETER_CM
     turn_circ = math.pi * CFG.TRACK_WIDTH_CM
-    wheel_travel = turn_circ * (angle_deg / 360.0)
+    wheel_travel = turn_circ * (abs(angle_deg) / 360.0)
     revs = wheel_travel / wheel_circ
     return revs * CFG.ENCODER_PULSES_PER_REV * CFG.TURN_CALIB
 
 
-def _run_to_target(
+def _run_turn_to_target(
     target_pulses: float,
     base_left: float,
     base_right: float,
     step: float,
     label: str,
+    *,
+    dry_angle_deg: Optional[float] = None,
 ) -> None:
-    """通用编码器闭环：累计脉冲到位；用 step 离散修正左右同步。"""
+    """turn_angle 内部：编码器脉冲闭环转到目标。"""
     _, _, car = _require_ready()
     target = max(0.0, float(target_pulses))
     step = max(0.0, float(step))
@@ -489,7 +492,10 @@ def _run_to_target(
     print(f"[ENC] {label}: target={target:.0f} pulses, step={step}")
 
     if _encoder is None or _encoder.dry:
-        duration = max(0.1, target / CFG.ENCODER_PULSES_PER_REV * 0.5)
+        if dry_angle_deg is not None:
+            duration = max(0.05, abs(dry_angle_deg) / CFG.ENC_DRY_TURN_DEG_PER_SEC)
+        else:
+            duration = max(0.1, target / CFG.ENCODER_PULSES_PER_REV * 0.5)
         print(f"[ENC] dry run {label}: {duration:.2f}s")
         car.drive(base_left, base_right)
         time.sleep(duration)
@@ -1008,26 +1014,31 @@ def forward_pid(
     print(f"[forward_pid] done L={left:.1f} R={right:.1f}")
 
 
-def turn_angle(angle_deg: float, speed: float, step: float) -> None:
+def turn_angle(angle_deg: float, speed: float = 50, step: float = 0.2) -> None:
     """
-    编码器闭环原地转指定角度（参考 v18 turn_angle + step 修正）。
+    编码器闭环原地转指定角度（v4+ 同款，setup 后直接调用）。
 
     参数：
-        angle_deg: 角度（度），正=逆时针左转，负=顺时针右转
-        speed:     转弯 PWM 幅度（传正数）
-        step:      每控制周期左右同步修正步长
+        angle_deg: 角度（度）。正=左转，负=右转
+        speed:     轮速 PWM 幅度，默认 50
+        step:      左右同步修正步长，默认 0.2
 
     示例：
-        turn_angle(90, 50, 0.2)
-        turn_angle(-75, 45, 0.2)
+        turn_angle(90)     # 左转 90°
+        turn_angle(-90)    # 右转 90°
+        turn_angle(45, 45) # 左转 45°，稍慢
     """
     angle_deg = float(angle_deg)
     s = clamp(abs(float(speed)), 0, 100)
-    target = _pulses_for_turn(abs(angle_deg))
+    target = _pulses_for_turn(angle_deg)
     if angle_deg >= 0:
-        _run_to_target(target, -s, s, step, f"turnL {angle_deg:.0f}deg")
+        _run_turn_to_target(
+            target, -s, s, step, f"turnL {angle_deg:.0f}deg", dry_angle_deg=angle_deg
+        )
     else:
-        _run_to_target(target, s, -s, step, f"turnR {-angle_deg:.0f}deg")
+        _run_turn_to_target(
+            target, s, -s, step, f"turnR {-angle_deg:.0f}deg", dry_angle_deg=angle_deg
+        )
 
 
 if __name__ == "__main__":
