@@ -31,8 +31,8 @@
 | 颜色识别 | HSV 阈值检测蓝 / 黄 / 红魔方，支持最大轮廓筛选 |
 | 视觉闭环 | `search_color` 步进搜色、`approach_target` PID 靠近色块 |
 | 开环运动 | `turn_left` / `turn_right` 定时转弯、`forward_time` 定时差速 |
-| 编码器闭环 | `forward_pid` 按时间直行；**v5** 另提供 `drive_distance` / `turn_angle` 按厘米 / 角度 |
-| v5 增强 | 左/右轮搜色、减速靠近、丢目标自动恢复、按厘米/角度编码器闭环 |
+| 编码器闭环 | `forward_pid` 按时间直行；**v5** 另提供 `turn_angle` 按角度转弯 |
+| v5 增强 | 左/右轮搜色、减速靠近、丢目标自动恢复、编码器按角度转弯 |
 | 调试支持 | `cv2.imshow` 实时画面、`dry_run` 模式（无 GPIO 时只打印电机指令） |
 | 临场标定 | 独立脚本 `HSV_test.py` 调 HSV 阈值 |
 
@@ -63,7 +63,7 @@ Raspberry_Pi_vision_car/
 ├── cube_v5.py      # v4 增强版（推荐新项目使用）
 ├── HSV_test.py     # HSV 颜色临场标定工具
 ├── cube_v4.md      # v4 完整 API：每个函数的传参 / Config 说明
-├── cube_v5.md      # v5 完整 API：含编码器距离/角度与新增闭环
+├── cube_v5.md      # v5 完整 API：含 turn_angle 与新增闭环
 └── README.md
 ```
 
@@ -72,7 +72,7 @@ Raspberry_Pi_vision_car/
 | 版本 | 适用场景 |
 |------|----------|
 | **`cube_v4.py`** | 流程简单，开环转弯 + `forward_pid` 按时间直行即可 |
-| **`cube_v5.py`** | 需要按厘米/角度走位、减速靠近、丢目标恢复、左/右轮搜色 |
+| **`cube_v5.py`** | 需要按角度转弯、减速靠近、丢目标恢复、左/右轮搜色 |
 
 ### v5 相比 v4
 
@@ -81,13 +81,13 @@ Raspberry_Pi_vision_car/
 | `search_color` | 仅右轮（参数名 `right_pwm`） | 默认右轮；`use_left_wheel=True` 可选左轮 |
 | 减速靠近 | 无 | `approach_target_brake` |
 | 丢目标恢复 | 无 | `approach_target_recover` |
-| 按距离/角度 | 无 | `drive_distance` / `turn_angle`（编码器脉冲闭环） |
+| 按角度转弯 | 无 | `turn_angle`（编码器脉冲闭环） |
 | 编码器 | 后台读速线程 | GPIO 回调累计脉冲（无后台线程） |
 
 **详细 API 文档：**
 
 - v4：**[cube_v4.md](./cube_v4.md)** — 全部公开 API、Config 总表、传参 vs Config 说明
-- v5：**[cube_v5.md](./cube_v5.md)** — v5 新增 API 与编码器 Config（`DIST_CALIB`、`TURN_CALIB` 等）
+- v5：**[cube_v5.md](./cube_v5.md)** — v5 新增 API 与编码器 Config（`TURN_CALIB` 等）
 
 ---
 
@@ -95,13 +95,13 @@ Raspberry_Pi_vision_car/
 
 | 类型 | 在哪里改 | 典型场景 |
 |------|----------|----------|
-| **传参** | `main` 里调用函数时 | `stop_pixels`、`dist_cm`、`angle_deg`、`forward_pid` 的 `duration` |
+| **传参** | `main` 里调用函数时 | `stop_pixels`、`angle_deg`、`forward_pid` 的 `duration` |
 | **PidParams** | `PidParams(kp=..., min_delta=...)` | 靠近 PID 手感 |
 | **Config (`CFG`)** | 源码 `Config` 或 `CFG.xxx = ...` | HSV、电机接线、分辨率、搜色/靠近超时、轮径与 CALIB |
 
 **经验法则：** 和「这一趟走多远、转几度、停多近」相关的 → **传参**；和「硬件、识别、全局超时、系统性走短/走长」相关的 → **Config**。
 
-每个 API 的传参表与 Config 表见 **[cube_v4.md §3~§9](./cube_v4.md)**、**[cube_v5.md §2~§13](./cube_v5.md)**。
+每个 API 的传参表与 Config 表见 **[cube_v4.md §3~§9](./cube_v4.md)**、**[cube_v5.md §2~§12](./cube_v5.md)**。
 
 ---
 
@@ -160,12 +160,12 @@ finally:
     cleanup()
 ```
 
-**v5 示例（编码器按角度/距离 + 丢目标恢复）：**
+**v5 示例（编码器按角度 + 丢目标恢复）：**
 
 ```python
 from cube_v5 import (
     setup, cleanup, search_color, approach_target_recover,
-    turn_angle, drive_distance, PidParams,
+    turn_angle, forward_pid, PidParams,
 )
 
 setup(dry_run=False, show_debug=True)
@@ -174,7 +174,7 @@ pid = PidParams(kp=0.18, ki=0.0, kd=0.012, min_delta=8, max_delta=12)
 try:
     approach_target_recover("blue", 28, pid, stop_pixels=15000)
     turn_angle(90, 50, 0.2)          # 传参：角度、速度、step
-    drive_distance(30, 40, 0.2)      # 传参：厘米、速度、step
+    forward_pid(40, 40, 0.5, 0.05, 0.8)
 
     if search_color(-40, 0.3, "yellow"):
         approach_target_recover("yellow", 28, pid, stop_pixels=15000)
@@ -184,7 +184,7 @@ finally:
     cleanup()
 ```
 
-标定 `drive_distance` / `turn_angle` 前，先在 `Config` 里设置 `WHEEL_DIAMETER_CM`、`TRACK_WIDTH_CM`，再调 `DIST_CALIB`、`TURN_CALIB`（详见 [cube_v5.md §3](./cube_v5.md)）。
+标定 `turn_angle` 前，先在 `Config` 里设置 `WHEEL_DIAMETER_CM`、`TRACK_WIDTH_CM`，再调 `TURN_CALIB`（详见 [cube_v5.md §3](./cube_v5.md)）。
 
 ### 3. 直接运行示例流程
 
@@ -202,7 +202,7 @@ python3 cube_v4.py
 python3 cube_v5.py
 ```
 
-可将示例中的 `turn_left` + `forward_pid` 逐步替换为 v5 的 `turn_angle` + `drive_distance`。
+可将示例中的 `turn_left` 逐步替换为 v5 的 `turn_angle`；直行仍用 `forward_pid`。
 
 ---
 
@@ -216,13 +216,12 @@ python3 cube_v5.py
 | `approach_target` | v4/v5 | 视觉 | `color`, `forward_speed`, `pid`, `stop_pixels` | `APPROACH_*`, HSV |
 | `approach_target_brake` | **v5** | 视觉 | + `brake_speed`, `brake_pixel` | 同 approach |
 | `approach_target_recover` | **v5** | 视觉 | + `backup_*`, `search_*` | 同 approach + search |
-| `drive_distance` | **v5** | 编码器 | `dist_cm`, `speed`, `step` | `DIST_CALIB`, 轮径, `ENC_*` |
 | `turn_angle` | **v5** | 编码器 | `angle_deg`, `speed`, `step` | `TURN_CALIB`, 轮距, `ENC_*` |
 | `turn_left` / `turn_right` | v4/v5 | 开环 | `duration`, `wheel_speed` | 电机方向 |
 | `forward_time` | v4/v5 | 开环 | `left`, `right`, `duration` | 电机方向 |
 | `forward_pid` | v4/v5 | 编码器 | `left`, `right`, `step`, `interval`, `duration` | 编码器引脚 |
 
-**速度约定：** 所有速度为 PWM 占空比，范围 **-100 ~ 100**；负值表示该轮反转。`drive_distance` / `turn_angle` 的 `speed` 传正数，方向由 `dist_cm` / `angle_deg` 符号决定。
+**速度约定：** 所有速度为 PWM 占空比，范围 **-100 ~ 100**；负值表示该轮反转。`turn_angle` 的 `speed` 传正数，方向由 `angle_deg` 符号决定。
 
 ---
 
@@ -251,13 +250,12 @@ python3 cube_v5.py
 | PID 手感 | 抖/慢/冲 | **传参** `PidParams` |
 | 转弯（开环） | 量 90° 对应时长 | **传参** `turn_left` / `turn_right` |
 | 直行（按时间） | 量赛道段长度 | **传参** `forward_pid` 的 `duration`、`step` |
-| 直行（按厘米） | **v5** `drive_distance(30,...)` 量实际 cm | **传参** `dist_cm`；**Config** `DIST_CALIB`、`WHEEL_DIAMETER_CM` |
 | 转弯（按角度） | **v5** `turn_angle(90,...)` 量实际角度 | **传参** `angle_deg`；**Config** `TURN_CALIB`、`TRACK_WIDTH_CM` |
 | 停点过冲 | **v5** 到位仍滑 | **Config** `ENC_FINISH_PULSES` |
 | 电机方向 | 前进变后退 | **Config** `SWAP_WHEELS` / `INVERT_*` |
 | 编码器左右反 | **v5** 距离/角度符号怪 | **Config** `ENC_SWAP` |
 
-完整分表见 [cube_v4.md §12](./cube_v4.md)、[cube_v5.md §15](./cube_v5.md)。
+完整分表见 [cube_v4.md §12](./cube_v4.md)、[cube_v5.md §14](./cube_v5.md)。
 
 ---
 
@@ -267,7 +265,7 @@ python3 cube_v5.py
 - 比赛脚本建议用 `try / except KeyboardInterrupt / finally: cleanup()` 包裹，避免异常时电机不停。
 - 红色在 HSV 中跨越 0° 与 180°，需分别配置 `RED1` 与 `RED2` 两段阈值。
 - 非树莓派环境无法使用真实 GPIO，适合离线调试视觉与流程逻辑。
-- v5 的 `drive_distance` / `turn_angle` 依赖轮径、轮距与 CALIB，首次上车务必在地面标定后再写比赛流程。
+- v5 的 `turn_angle` 依赖轮径、轮距与 `TURN_CALIB`，首次上车务必在地面标定后再写比赛流程。
 
 ---
 

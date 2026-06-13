@@ -4,7 +4,7 @@
 魔方绕桩任务 — 可拼接函数库（OpenCV + RPi.GPIO）
 
 本文件不提供完整 main，只提供动作函数 + 初始化/清理/调试显示。
-  含 forward_pid / drive_distance / turn_angle（霍尔编码器）、search_color（步进搜色）。
+  含 forward_pid / turn_angle（霍尔编码器）、search_color（步进搜色）。
 速度参数均为 PWM 占空比，范围 -100~100；负值表示该轮反转（后退）。
 
 摄像头（参考 text_alms）：默认 320x240 @ 40fps，降低分辨率以提升树莓派帧率。
@@ -66,13 +66,11 @@ class Config:
 
     WHEEL_DIAMETER_CM: float = 6.5
     TRACK_WIDTH_CM: float = 14.0
-    DIST_CALIB: float = 0.9
     TURN_CALIB: float = 0.9
     ENC_FINISH_PULSES: int = 4
     ENC_TIMEOUT_S: float = 6.0
     ENC_LOOP_INTERVAL: float = 0.01
     ENC_SWAP: bool = False
-    ENC_DRY_CM_PER_SEC: float = 35.0
 
     SWAP_WHEELS: bool = False
     INVERT_LEFT: bool = False
@@ -406,7 +404,7 @@ class Car:
 
 
 # =============================================================================
-# 霍尔编码器（参考 v18：累计脉冲，用于 drive_distance / turn_angle / forward_pid）
+# 霍尔编码器（累计脉冲，用于 turn_angle / forward_pid）
 # =============================================================================
 
 class WheelEncoder:
@@ -466,12 +464,6 @@ def _wheel_counts() -> Tuple[int, int]:
     return pl, pr
 
 
-def _pulses_for_distance(dist_cm: float) -> float:
-    circ = math.pi * CFG.WHEEL_DIAMETER_CM
-    revs = dist_cm / circ
-    return revs * CFG.ENCODER_PULSES_PER_REV * CFG.DIST_CALIB
-
-
 def _pulses_for_turn(angle_deg: float) -> float:
     wheel_circ = math.pi * CFG.WHEEL_DIAMETER_CM
     turn_circ = math.pi * CFG.TRACK_WIDTH_CM
@@ -486,8 +478,6 @@ def _run_to_target(
     base_right: float,
     step: float,
     label: str,
-    *,
-    dry_dist_cm: Optional[float] = None,
 ) -> None:
     """通用编码器闭环：累计脉冲到位；用 step 离散修正左右同步。"""
     _, _, car = _require_ready()
@@ -499,10 +489,7 @@ def _run_to_target(
     print(f"[ENC] {label}: target={target:.0f} pulses, step={step}")
 
     if _encoder is None or _encoder.dry:
-        if dry_dist_cm is not None:
-            duration = max(0.05, abs(dry_dist_cm) / CFG.ENC_DRY_CM_PER_SEC)
-        else:
-            duration = max(0.1, target / CFG.ENCODER_PULSES_PER_REV * 0.5)
+        duration = max(0.1, target / CFG.ENCODER_PULSES_PER_REV * 0.5)
         print(f"[ENC] dry run {label}: {duration:.2f}s")
         car.drive(base_left, base_right)
         time.sleep(duration)
@@ -980,7 +967,7 @@ def forward_pid(
         interval:    调整间隔（秒）
         duration:    前进总时长（秒）
 
-    按距离/角度停请用 drive_distance / turn_angle。
+    按角度停请用 turn_angle。
     """
     _, _, car = _require_ready()
     left = float(left_speed)
@@ -1019,27 +1006,6 @@ def forward_pid(
     car.stop()
     time.sleep(0.06)
     print(f"[forward_pid] done L={left:.1f} R={right:.1f}")
-
-
-def drive_distance(dist_cm: float, speed: float, step: float) -> None:
-    """
-    编码器闭环直行指定距离（参考 v18 drive_distance + forward_pid 式 step 修正）。
-
-    参数：
-        dist_cm: 距离（厘米），正=前进，负=后退
-        speed:   轮速 PWM 幅度（传正数），方向由 dist_cm 符号决定
-        step:    每控制周期左右同步修正步长（同 forward_pid）
-
-    示例：
-        drive_distance(30, 40, 0.2)
-        drive_distance(-20, 35, 0.2)
-    """
-    sign = 1 if dist_cm >= 0 else -1
-    s = clamp(abs(float(speed)), 0, 100) * sign
-    target = _pulses_for_distance(abs(float(dist_cm)))
-    _run_to_target(
-        target, s, s, step, f"drive {dist_cm:.1f}cm", dry_dist_cm=float(dist_cm)
-    )
 
 
 def turn_angle(angle_deg: float, speed: float, step: float) -> None:
