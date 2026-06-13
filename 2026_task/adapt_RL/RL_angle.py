@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-魔方绕桩任务 — 可拼接函数库（OpenCV + RPi.GPIO）
+魔方绕桩任务 — 可拼接函数库 v4+（OpenCV + RPi.GPIO）
 
-本文件不提供完整 main，只提供动作函数 + 初始化/清理/调试显示。
-  含 forward_pid / turn_angle（霍尔编码器）、search_color（步进搜色）。
+在 cube_v4 基础上仅新增 turn_angle（编码器按角度转弯），其余 API 与 v4 相同。
+  含 forward_pid、search_color、turn_angle 等。
 速度参数均为 PWM 占空比，范围 -100~100；负值表示该轮反转（后退）。
+
+turn_angle 即插即用（setup 后直接调用）：
+    turn_angle(90)       # 左转 90°，默认 speed=50, step=0.2
+    turn_angle(-90)      # 右转 90°
+    turn_left(0.2, 60)   # 仍可继续用 v4 开环转弯
 
 摄像头（参考 text_alms）：默认 320x240 @ 40fps，降低分辨率以提升树莓派帧率。
   换分辨率后须同步缩放面积阈值与横向像素容差，见 Config 内注释。
@@ -58,12 +63,13 @@ class Config:
     RIGHT_IN2: int = 21
     PWM_FREQ: int = 80
 
-    # 霍尔编码器（参考 v18：B2A=GPIO6, B1A=GPIO12，单相上升沿累计计数）
+    # 霍尔编码器（参考 auto_back.py：LS=6, RS=12）
     LEFT_ENCODER: int = 6
     RIGHT_ENCODER: int = 12
     ENCODER_PULSES_PER_REV: float = 585.0
     FORWARD_PID_INTERVAL: float = 0.01
 
+    # turn_angle 专用（首次上车按地面标定 TURN_CALIB / TRACK_WIDTH_CM）
     WHEEL_DIAMETER_CM: float = 6.5
     TRACK_WIDTH_CM: float = 14.0
     TURN_CALIB: float = 0.5
@@ -93,7 +99,7 @@ class Config:
     # search_color 总搜索超时（秒）
     SEARCH_FULL_ROTATION_TIME: float = 10
     # search_color：每步停车后等待画面稳定再识别（秒）
-    SEARCH_COLOR_SETTLE_TIME: float = 0.5
+    SEARCH_COLOR_SETTLE_TIME: float = 0.3
 
     APPROACH_LOST_BACKUP_FRAMES: int = 10
     APPROACH_TIMEOUT: float = 15.0
@@ -405,16 +411,22 @@ class Car:
 
 
 # =============================================================================
-# 霍尔编码器（累计脉冲，用于 turn_angle / forward_pid）
+# 霍尔编码器（forward_pid 读速 + turn_angle 累计脉冲，互不干扰）
 # =============================================================================
 
 class WheelEncoder:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.dry = cfg.DRY_RUN or GPIO is None
+        self.lcounter = 0
+        self.rcounter = 0
+        self.lspeed = 0.0
+        self.rspeed = 0.0
         self._count_left = 0
         self._count_right = 0
         self._lock = threading.Lock()
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
         self._enabled = False
 
     def setup(self) -> None:
@@ -425,13 +437,14 @@ class WheelEncoder:
         GPIO.add_event_detect(self.cfg.LEFT_ENCODER, GPIO.RISING, callback=self._on_left)
         GPIO.add_event_detect(self.cfg.RIGHT_ENCODER, GPIO.RISING, callback=self._on_right)
         self._enabled = True
-        print(f"[ENCODER] ready L=GPIO{self.cfg.LEFT_ENCODER} R=GPIO{self.cfg.RIGHT_ENCODER}")
 
     def _on_left(self, _channel: int) -> None:
+        self.lcounter += 1
         with self._lock:
             self._count_left += 1
 
     def _on_right(self, _channel: int) -> None:
+        self.rcounter += 1
         with self._lock:
             self._count_right += 1
 
@@ -441,11 +454,30 @@ class WheelEncoder:
             self._count_right = 0
 
     def read(self) -> Tuple[int, int]:
-        """返回物理侧 (left_count, right_count)。"""
         with self._lock:
             return self._count_left, self._count_right
 
+    def start(self) -> None:
+        self.running = True
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def _loop(self) -> None:
+        while self.running:
+            self.lspeed = self.lcounter / self.cfg.ENCODER_PULSES_PER_REV
+            self.rspeed = self.rcounter / self.cfg.ENCODER_PULSES_PER_REV
+            self.lcounter = 0
+            self.rcounter = 0
+            time.sleep(self.cfg.FORWARD_PID_INTERVAL)
+
+    def get_speeds(self) -> Tuple[float, float]:
+        return self.lspeed, self.rspeed
+
     def stop(self) -> None:
+        self.running = False
+        if self.thread is not None:
+            self.thread.join(timeout=1.0)
+            self.thread = None
         if self._enabled and not self.dry:
             try:
                 GPIO.remove_event_detect(self.cfg.LEFT_ENCODER)
@@ -456,7 +488,7 @@ class WheelEncoder:
 
 
 def _wheel_counts() -> Tuple[int, int]:
-    """映射为与 Car.drive(left, right) 一致的软件左右累计脉冲。"""
+    """与 Car.drive(left, right) 一致的软件左右累计脉冲。"""
     if _encoder is None:
         return 0, 0
     pl, pr = _encoder.read()
@@ -561,6 +593,7 @@ def setup(dry_run: bool = False, show_debug: bool = True) -> None:
     _camera = CameraThread(CFG)
     _car.setup()
     _encoder.setup()
+    _encoder.start()
     _camera.start()
     time.sleep(0.2)
 
@@ -613,43 +646,40 @@ def _drive_for(duration: float, left: float, right: float) -> None:
 # =============================================================================
 
 # 与 approach_target 中 vis.detect(frame, color, 1) 判定标准一致
-_APPROACH_DETECT_MIN_PIXELS = 50
+_APPROACH_DETECT_MIN_PIXELS = 1
 
 
 def search_color(
-    wheel_pwm: float,
+    right_pwm: float,
     interval: float,
     color: str,
-    use_left_wheel: bool = False,
 ) -> bool:
     """
-    单轮步进旋转搜索指定颜色；找到与否与 approach_target 能否开进同一标准。
+    右轮单轮步进旋转搜索指定颜色；找到与否与 approach_target 能否开进同一标准。
 
-    每步流程：固定一侧轮为 0、另一侧轮 wheel_pwm 转 interval 秒 → 停车 → 等画面稳 → 识别一帧。
+    每步流程：左轮 0、右轮 right_pwm 转 interval 秒 → 停车 → 等画面稳 → 识别一帧。
     识别条件同 approach_target：最大色块面积在 [1, MAX_VALID_AREA] 内即视为找到。
 
     参数：
-        wheel_pwm:      驱动轮 PWM（-100~100，可正可负），另一侧轮恒为 0
-        interval:       每步旋转时长（秒）
-        color:          blue / yellow / red（或 蓝/黄/红）
-        use_left_wheel: False（默认）用右轮搜色；True 时用左轮搜色
+        right_pwm: 右轮 PWM（-100~100，可正可负），左轮恒为 0
+        interval:  每步右轮旋转时长（秒）
+        color:     blue / yellow / red（或 蓝/黄/红）
 
     返回：
         True  — 画面内已有可 approach 的色块，可接 approach_target(...)
         False — 在 SEARCH_FULL_ROTATION_TIME 内未找到
 
     示例：
-        search_color(25, 0.12, "blue")                      # 右轮（默认）
-        search_color(-40, 0.3, "yellow", use_left_wheel=True)  # 左轮
+        if search_color(25, 0.12, "blue"):
+            approach_target("blue", 28, pid_approach, CFG.APPROACH_STOP_PIXELS)
     """
     cam, vis, car = _require_ready()
     color = _norm_color(color)
-    wheel_pwm = clamp(float(wheel_pwm), -100, 100)
+    right_pwm = clamp(float(right_pwm), -100, 100)
     interval = max(0.02, float(interval))
-    wheel_name = "left" if use_left_wheel else "right"
 
     print(
-        f"[search_color] 找 {color}, {wheel_name}_pwm={wheel_pwm}, "
+        f"[search_color] 找 {color}, right_pwm={right_pwm}, "
         f"interval={interval}s, timeout={CFG.SEARCH_FULL_ROTATION_TIME}s"
     )
 
@@ -670,10 +700,7 @@ def search_color(
         return True
 
     while now() - t0 < CFG.SEARCH_FULL_ROTATION_TIME:
-        if use_left_wheel:
-            car.drive(wheel_pwm, 0)
-        else:
-            car.drive(0, wheel_pwm)
+        car.drive(0, right_pwm)
         time.sleep(interval)
         car.stop()
         time.sleep(CFG.SEARCH_COLOR_SETTLE_TIME)
@@ -688,13 +715,25 @@ def search_color(
     return False
 
 
-def _approach_target_run(
+def approach_target(
     color: str,
     forward_speed: float,
     pid_params: PidInput,
     stop_pixels: int,
-) -> str:
-    """执行一次靠近；返回 ok / lost / timeout。"""
+) -> bool:
+    """
+    使用 PID 直行靠近指定颜色魔方，色块像素数达到 stop_pixels 后停止。
+
+    参数：
+        color: blue / yellow / red
+        forward_speed: 前进基础 PWM 占空比（左右轮同向）
+        pid_params: PidParams 或 (kp, ki, kd)
+        stop_pixels: 达到该像素面积（轮廓面积）后结束前进
+
+    返回：
+        True  — 已靠近到阈值
+        False — 超时或长时间丢失目标
+    """
     cam, vis, car = _require_ready()
     color = _norm_color(color)
     pp = _parse_pid(pid_params)
@@ -723,14 +762,14 @@ def _approach_target_run(
                 continue
             car.stop()
             print(f"[approach_target] 丢失 {color} 过久")
-            return "lost"
+            return False
 
         lost = 0
         if det["pixel_count"] >= stop_pixels:
             car.stop()
             print(f"[approach_target] 到达 stop_pixels={det['pixel_count']}")
             time.sleep(0.1)
-            return "ok"
+            return True
 
         error = det["center_x"] - CFG.WIDTH / 2.0
         delta = pid.feedback(error)
@@ -738,6 +777,7 @@ def _approach_target_run(
         if abs(delta) < pp.min_delta:
             delta = 0.0
 
+        # error>0 目标偏右 -> 左轮快、右轮慢
         left = forward_speed + delta
         right = forward_speed - delta
         car.drive(left, right)
@@ -745,175 +785,39 @@ def _approach_target_run(
 
     car.stop()
     print("[approach_target] 超时")
-    return "timeout"
-
-
-def approach_target(
-    color: str,
-    forward_speed: float,
-    pid_params: PidInput,
-    stop_pixels: int,
-) -> bool:
-    """
-    使用 PID 直行靠近指定颜色魔方，色块像素数达到 stop_pixels 后停止。
-
-    参数：
-        color: blue / yellow / red
-        forward_speed: 前进基础 PWM 占空比（左右轮同向）
-        pid_params: PidParams 或 (kp, ki, kd)
-        stop_pixels: 达到该像素面积（轮廓面积）后结束前进
-
-    返回：
-        True  — 已靠近到阈值
-        False — 超时或长时间丢失目标
-    """
-    return _approach_target_run(color, forward_speed, pid_params, stop_pixels) == "ok"
-
-
-def approach_target_recover(
-    color: str,
-    forward_speed: float,
-    pid_params: PidInput,
-    stop_pixels: int,
-    *,
-    backup_left: float = -40,
-    backup_right: float = -40,
-    backup_step: float = 0.5,
-    backup_interval: float = 0.05,
-    backup_duration: float = 0.8,
-    search_pwm: float = -40,
-    search_interval: float = 0.3,
-    use_left_wheel: bool = False,
-) -> bool:
-    """
-    靠近色块；若尚未到达阈值且因丢失目标失败，则后退 → 搜色 → 再次靠近。
-
-    流程：
-        1. 调用 approach_target
-        2. 若因丢失目标失败：forward_pid 后退 backup_duration 秒
-        3. search_color（默认右轮 pwm=40, interval=0.3）
-        4. 搜到则再次 approach_target
-
-    参数：
-        color, forward_speed, pid_params, stop_pixels: 同 approach_target
-        backup_*: 后退用的 forward_pid 参数（默认与 __main__ 直行一致，速度取负）
-        search_pwm, search_interval, use_left_wheel: 恢复搜色参数
-
-    返回：
-        True  — 首次或恢复后成功靠近到 stop_pixels
-        False — 超时、搜色失败或恢复后仍失败
-    """
-    result = _approach_target_run(color, forward_speed, pid_params, stop_pixels)
-    if result == "ok":
-        return True
-    if result != "lost":
-        print(f"[approach_target_recover] 非丢失目标失败({result})，跳过后退搜色")
-        return False
-
-    color = _norm_color(color)
-    print(f"[approach_target_recover] 丢失 {color}，后退 {backup_duration}s 后重新搜色")
-    forward_pid(
-        backup_left, backup_right, backup_step, backup_interval, backup_duration
-    )
-    if not search_color(
-        search_pwm, search_interval, color, use_left_wheel=use_left_wheel
-    ):
-        print(f"[approach_target_recover] 搜色未找到 {color}")
-        return False
-
-    return _approach_target_run(color, forward_speed, pid_params, stop_pixels) == "ok"
-
-
-def approach_target_brake(
-    color: str,
-    forward_speed: float,
-    pid_params: PidInput,
-    stop_pixels: int,
-    brake_speed: float,
-    brake_pixel: int,
-) -> bool:
-    """
-    带减速靠近：先用 forward_speed 前进，色块面积达到 brake_pixel 后改用 brake_speed，达到 stop_pixels 停止。
-
-    参数：
-        color: blue / yellow / red
-        forward_speed: 靠近初期 PWM 占空比（较快）
-        pid_params: PidParams 或 (kp, ki, kd)
-        stop_pixels: 达到该像素面积后结束前进
-        brake_speed: 达到 brake_pixel 后使用的 PWM 占空比（较慢，模拟刹车）
-        brake_pixel: 开始减速的像素面积阈值
-
-    返回：
-        True  — 已靠近到 stop_pixels
-        False — 超时或长时间丢失目标
-    """
-    cam, vis, car = _require_ready()
-    color = _norm_color(color)
-    pp = _parse_pid(pid_params)
-    pid = PID(pp.kp, pp.ki, pp.kd)
-    pid.reset()
-
-    print(
-        f"[approach_target_brake] 靠近 {color}, speed={forward_speed}, "
-        f"brake>={brake_pixel}@{brake_speed}, stop>={stop_pixels}"
-    )
-
-    lost = 0
-    braking = False
-    t0 = now()
-
-    while now() - t0 < CFG.APPROACH_TIMEOUT:
-        frame = cam.get_frame()
-        if frame is None:
-            time.sleep(0.02)
-            continue
-
-        det = vis.detect(frame, color, 1)
-        show_debug(f"approach_brake {color}", det)
-
-        if det is None:
-            lost += 1
-            backup_speed = brake_speed if braking else forward_speed
-            if lost < CFG.APPROACH_LOST_BACKUP_FRAMES:
-                car.drive(-backup_speed * 0.5, -backup_speed * 0.5)
-                time.sleep(0.04)
-                continue
-            car.stop()
-            print(f"[approach_target_brake] 丢失 {color} 过久")
-            return False
-
-        lost = 0
-        if det["pixel_count"] >= stop_pixels:
-            car.stop()
-            print(f"[approach_target_brake] 到达 stop_pixels={det['pixel_count']}")
-            time.sleep(0.1)
-            return True
-
-        if not braking and det["pixel_count"] >= brake_pixel:
-            braking = True
-            print(f"[approach_target_brake] 开始减速 px={det['pixel_count']}, speed={brake_speed}")
-
-        speed = brake_speed if braking else forward_speed
-
-        error = det["center_x"] - CFG.WIDTH / 2.0
-        delta = pid.feedback(error)
-        delta = clamp(delta, -pp.max_delta, pp.max_delta)
-        if abs(delta) < pp.min_delta:
-            delta = 0.0
-
-        left = speed + delta
-        right = speed - delta
-        car.drive(left, right)
-        time.sleep(0.02)
-
-    car.stop()
-    print("[approach_target_brake] 超时")
     return False
+
+
+def turn_angle(angle_deg: float, speed: float = 50, step: float = 0.2) -> None:
+    """
+    编码器闭环原地转指定角度（v4+ 新增，setup 后直接调用）。
+
+    参数：
+        angle_deg: 角度（度）。正=左转，负=右转
+        speed:     轮速 PWM 幅度，默认 50
+        step:      左右同步修正步长，默认 0.2
+
+    示例（复制即用）：
+        turn_angle(90)     # 左转 90°
+        turn_angle(-90)    # 右转 90°
+        turn_angle(45, 45) # 左转 45°，稍慢
+    """
+    angle_deg = float(angle_deg)
+    s = clamp(abs(float(speed)), 0, 100)
+    target = _pulses_for_turn(angle_deg)
+    if angle_deg >= 0:
+        _run_turn_to_target(
+            target, -s, s, step, f"turnL {angle_deg:.0f}deg", dry_angle_deg=angle_deg
+        )
+    else:
+        _run_turn_to_target(
+            target, s, -s, step, f"turnR {-angle_deg:.0f}deg", dry_angle_deg=angle_deg
+        )
 
 
 def turn_left(duration: float, wheel_speed: float) -> None:
     """
-    逆时针原地旋转（左转），持续 duration 秒。
+    逆时针原地旋转（左转），持续 duration 秒（开环，与 turn_angle 二选一）。
 
     参数：
         duration: 执行时长（秒）
@@ -964,22 +868,23 @@ def forward_pid(
     duration: float,
 ) -> None:
     """
-    霍尔编码器直行（按时间停）：每隔 interval 读脉冲增量并修正，左快则左减右加。
+    霍尔编码器闭环直行（参考 auto_back.py）：
+    以左右轮初速度前进，每隔 interval 读编码器转速并修正，左快则左减右加，右快则右减左加。
 
     参数：
         left_speed:  左轮初始 PWM 占空比（可负表示后退）
         right_speed: 右轮初始 PWM 占空比
-        step:        每次调整的速度修正步长
-        interval:    调整间隔（秒）
+        step:        每次调整的速度修正步长（auto_back 默认 0.2）
+        interval:    调整间隔（秒），每隔多久读编码器并修正一次（auto_back 默认 0.01）
         duration:    前进总时长（秒）
 
-    按角度停请用 turn_angle。
+    用法（setup 后可直接调用，与 forward_time 一样即插即用）：
+        forward_pid(20, 20, 0.2, 0.01, 1.6)
     """
     _, _, car = _require_ready()
     left = float(left_speed)
     right = float(right_speed)
-    interval = max(0.01, float(interval))
-    step = max(0.0, float(step))
+    interval = max(0.005, float(interval))
 
     print(
         f"[forward_pid] {duration:.2f}s L0={left} R0={right} "
@@ -988,21 +893,15 @@ def forward_pid(
 
     t0 = now()
     while now() - t0 < duration:
-        snap_l = snap_r = 0
-        if _encoder is not None and not _encoder.dry:
-            snap_l, snap_r = _encoder.read()
-
         car.drive(left, right)
         time.sleep(interval)
 
         if _encoder is not None and not _encoder.dry:
-            new_l, new_r = _encoder.read()
-            dl = new_l - snap_l
-            dr = new_r - snap_r
-            if dl > dr:
+            lspeed, rspeed = _encoder.get_speeds()
+            if lspeed > rspeed:
                 right += step
                 left -= step
-            elif dl < dr:
+            elif lspeed < rspeed:
                 right -= step
                 left += step
 
@@ -1014,33 +913,6 @@ def forward_pid(
     print(f"[forward_pid] done L={left:.1f} R={right:.1f}")
 
 
-def turn_angle(angle_deg: float, speed: float = 50, step: float = 0.2) -> None:
-    """
-    编码器闭环原地转指定角度（v4+ 同款，setup 后直接调用）。
-
-    参数：
-        angle_deg: 角度（度）。正=左转，负=右转
-        speed:     轮速 PWM 幅度，默认 50
-        step:      左右同步修正步长，默认 0.2
-
-    示例：
-        turn_angle(90)     # 左转 90°
-        turn_angle(-90)    # 右转 90°
-        turn_angle(45, 45) # 左转 45°，稍慢
-    """
-    angle_deg = float(angle_deg)
-    s = clamp(abs(float(speed)), 0, 100)
-    target = _pulses_for_turn(angle_deg)
-    if angle_deg >= 0:
-        _run_turn_to_target(
-            target, -s, s, step, f"turnL {angle_deg:.0f}deg", dry_angle_deg=angle_deg
-        )
-    else:
-        _run_turn_to_target(
-            target, s, -s, step, f"turnR {-angle_deg:.0f}deg", dry_angle_deg=angle_deg
-        )
-
-
 if __name__ == "__main__":
     # ----- 1. 初始化（调试可先 DRY_RUN=True 只看识别）-----
     setup(dry_run=False, show_debug=True)
@@ -1048,9 +920,87 @@ if __name__ == "__main__":
     pid_approach = PidParams(kp=0.18, ki=0.0, kd=0.012, min_delta=8, max_delta=12)
 
     try:
-       #finish your code here
+        #find blue and turn left
+        
+        time.sleep(0.5)
+        #approach_target("blue", forward_speed=34, pid_params=pid_approach, stop_pixels=8000)
+        #time.sleep(0.3)
+        turn_angle(45)# delete or shorter, depends on where to place the car
+        
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,1.0)
+        time.sleep(0.3)
+        search_color(-40,0.3,"yellow")
+        #find yellow and turn right
+        approach_target("yellow", forward_speed=34, pid_params=pid_approach, stop_pixels=8000)
+        time.sleep(0.3)
+        turn_angle(-60)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,1)
+        time.sleep(0.3)
+        turn_angle(90)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,0.5)
+        time.sleep(0.3)
+        search_color(40,0.3,"red")
+        
+        #find red and turn left
+        approach_target("red", forward_speed=34, pid_params=pid_approach, stop_pixels=3000)
+        time.sleep(0.3)
+        turn_angle(150)
+        time.sleep(0.3)
+        
+        
+        search_color(40,0.3,"yellow")
+        
+        approach_target("yellow", forward_speed=34, pid_params=pid_approach, stop_pixels=15000)
+        time.sleep(0.3)
+        turn_angle(-90)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,1.0)
+        time.sleep(0.3)
+        turn_angle(90)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,0.6)
+        time.sleep(0.3)
+        
+        search_color(40,0.3,"blue")
+    
+        #find blue and turn left
+        approach_target("blue", forward_speed=34, pid_params=pid_approach, stop_pixels=2400)
+        time.sleep(0.3)
+        turn_angle(150)
+        time.sleep(0.3)       
+        ##
+        search_color(40,0.3,"yellow")
+        
+        approach_target("yellow", forward_speed=34, pid_params=pid_approach, stop_pixels=15000)
+        time.sleep(0.3)
+        turn_angle(-90)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,1)
+        time.sleep(0.3)
+        turn_angle(60)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,0.6)
+        time.sleep(0.3)
+
+
+        search_color(40,0.3,"red")
+        
+        approach_target("red", forward_speed=34, pid_params=pid_approach, stop_pixels=9000)
+        time.sleep(0.3)
+        '''
+        turn_angle(-90)
+        time.sleep(0.3)
+        forward_pid(60,60,0.5,0.05,0.8)
+        time.sleep(0.3)
+        turn_angle(30)
+        forward_pid(60,60,0.5,0.05,3)
+        '''
         cleanup()
     except KeyboardInterrupt:
         pass
     finally:
         cleanup()
+        
