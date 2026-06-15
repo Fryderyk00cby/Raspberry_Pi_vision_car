@@ -1,8 +1,10 @@
 # Raspberry Pi Vision Car — 魔方绕桩
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 基于树莓派的视觉小车控制库，面向**魔方绕桩**比赛任务。通过 OpenCV 识别蓝 / 黄 / 红三色魔方，结合 PID 视觉闭环与霍尔编码器运动控制，在赛道上完成搜色、靠近、转弯与冲线等动作。
 
-本仓库提供**可拼接的动作函数库**，不包含固定比赛流程——你需要在 `main` 里按现场赛道自行组合 `setup` → 动作函数 → `cleanup`。
+本仓库提供**可拼接的动作函数库**，不包含固定比赛流程，你可以根据规则在 `main` 里按现场赛道自行组合 `setup` → 动作函数 → `cleanup`。
 
 ---
 
@@ -64,7 +66,8 @@ Raspberry_Pi_vision_car/
 ├── 2026_task/      # 2026 版电子系统导论课程项目规则实现示例代码（参考用）
 ├── HSV_test.py     # HSV 颜色临场标定工具
 ├── cube_v4.md      # v4 完整 API：每个函数的传参 / Config 说明
-├── cube_v5.md      # v5 完整 API：含 turn_angle 与新增闭环
+├── cube_v5.md      # v5 完整 API：v5 专有增强与编码器说明
+├── LICENSE         # MIT 许可证
 └── README.md
 ```
 
@@ -87,13 +90,14 @@ Raspberry_Pi_vision_car/
 **详细 API 文档：**
 
 - v4：**[cube_v4.md](./cube_v4.md)** — 全部公开 API、Config 总表、传参 vs Config 说明
-- v5：**[cube_v5.md](./cube_v5.md)** — v5 新增 API 与编码器 Config（`TURN_CALIB` 等）
+- v5：**[cube_v5.md](./cube_v5.md)** — v5 专有 API（搜色轮选择、减速靠近、丢目标恢复）与编码器说明
 
 ### 关于 `2026_task`
 
 - `2026_task/` 是 **2026 版本电子系统导论课程**项目规则实现示例代码目录（供参考）。
-- `2026_task` 的实现应沿用当前 `cube_v4.py` 的核心代码框架（同一套基础函数与控制逻辑），主要差异在赛道/路线参数与流程拼接。
+- `2026_task` 的实现沿用 `cube_v4.py` 的核心代码框架（同一套基础函数与控制逻辑），主要差异在赛道/路线参数与流程拼接。
 - 目录下 `adapt_LL/LR/MM/RL/RR` 是不同路线适配样例，可按赛道选择与微调。
+- 五种情况说明见 **[2026_task/2026_version_example.md](./2026_task/2026_version_example.md)**，赛道规则示意图见 `2026_task/rule.png`。
 
 ---
 
@@ -277,4 +281,6 @@ python3 cube_v5.py
 
 ## 许可证
 
-本项目为比赛/教学用途代码，使用前请根据实际硬件与赛道条件完成标定与测试。
+本项目采用 [MIT License](./LICENSE) 开源。
+
+使用前请根据实际硬件与赛道条件完成标定与测试；比赛现场表现取决于标定质量，代码按「原样」提供，不作性能保证。

@@ -1,6 +1,6 @@
 # cube_v5.py 使用说明
 
-魔方绕桩任务的**可拼接函数库（v5 增强版）**。在 `cube_v4.py` 全部能力之上，新增左/右轮搜色、减速靠近、丢目标自动恢复、`turn_angle` 编码器按角度转弯。
+魔方绕桩任务的**可拼接函数库（v5 增强版）**。在 `cube_v4.py` 全部能力（含 `turn_angle`）之上，新增左/右轮搜色、减速靠近、丢目标自动恢复；编码器实现改为 GPIO 回调累计脉冲（v4 为后台读速线程）。
 
 依赖：OpenCV、NumPy、树莓派上的 RPi.GPIO（非树莓派环境会自动进入 DRY_RUN，只打印电机指令）。
 
@@ -19,7 +19,7 @@
 - [7. approach_target](#7-approach_targetcolor-forward_speed-pid_params-stop_pixels--bool)
 - [8. approach_target_brake](#8-approach_target_brake--bool-v5-新增)
 - [9. approach_target_recover](#9-approach_target_recover--bool-v5-新增)
-- [10. turn_angle](#10-turn_angleangle_deg-speed-step-v5-新增)
+- [10. turn_angle](#10-turn_angleangle_deg-speed-step与-v4-相同)
 - [11. 开环 / 按时间编码器 API](#11-开环--按时间编码器-api与-v4-相同)
 - [12. 函数一览](#12-函数一览)
 - [13. 典型比赛流程](#13-典型比赛流程参考-__main__)
@@ -35,7 +35,7 @@
 | `search_color` 驱动轮 | 仅右轮（参数名 `right_pwm`） | 默认右轮；可选左轮（`use_left_wheel=True`） |
 | 减速靠近 | 无 | `approach_target_brake` |
 | 丢目标恢复 | 无 | `approach_target_recover` |
-| 按角度转弯 | 无（仅开环 `turn_left`） | `turn_angle`（编码器脉冲闭环） |
+| 按角度转弯 | `turn_angle`（编码器脉冲闭环） | 同 v4；实现方式见上行编码器模式 |
 | 编码器模式 | 后台读速线程 | GPIO 回调累计脉冲（无后台线程） |
 
 直行仍用 v4 的 `forward_pid`（按时间）。
@@ -59,9 +59,9 @@
 
 ---
 
-## 3. v5 专有 Config（编码器角度）
+## 3. 编码器角度相关 Config（v4/v5 共享）
 
-v4 Config 见 [cube_v4.md §4](./cube_v4.md#4-config-总表按用途分类)。下表为 **v5 新增或行为变更** 的字段。
+v4 Config 见 [cube_v4.md §4](./cube_v4.md#4-config-总表按用途分类)，其中 §4.5 已列出 `turn_angle` 字段。下表便于 v5 用户查阅；**v4 与 v5 默认值相同**。
 
 | 字段 | 默认 | 关联 API | 说明 | 何时改 |
 |------|------|----------|------|--------|
@@ -264,9 +264,9 @@ approach_target_recover(
 
 ---
 
-## 10. turn_angle(angle_deg, speed=50, step=0.2) 【v5 新增】
+## 10. turn_angle(angle_deg, speed=50, step=0.2)（与 v4 相同）
 
-**功能：** 编码器闭环原地转指定**角度**；正=逆时针左转，负=顺时针右转。
+**功能：** 编码器闭环原地转指定**角度**；正=逆时针左转，负=顺时针右转。完整说明亦见 [cube_v4.md §9](./cube_v4.md#9-开环--编码器运动-api)。
 
 ```python
 turn_angle(90)              # 左转 90°（默认 speed=50, step=0.2）
