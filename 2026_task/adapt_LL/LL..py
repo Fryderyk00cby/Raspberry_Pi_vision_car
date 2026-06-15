@@ -987,13 +987,20 @@ if __name__ == "__main__":
         search_color(40,0.3,"red")
         
         approach_target("red", forward_speed=34, pid_params=pid_approach, stop_pixels=9000)
+        time.sleep(0.3)     
+        turn_angle(-45)
         time.sleep(0.3)
-        turn_angle(-90)
+        forward_pid(40,40,0.5,0.05,0.6)
         time.sleep(0.3)
-        forward_pid(60,60,0.5,0.05,0.8)
+        turn_angle(45)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,0.6)
         time.sleep(0.3)
         turn_angle(30)
-        forward_pid(60,60,0.5,0.05,3)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,3)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,3)
         cleanup()
     except KeyboardInterrupt:
         pass

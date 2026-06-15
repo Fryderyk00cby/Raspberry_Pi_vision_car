@@ -918,31 +918,30 @@ if __name__ == "__main__":
     setup(dry_run=False, show_debug=True)
 
     pid_approach = PidParams(kp=0.18, ki=0.0, kd=0.012, min_delta=8, max_delta=12)
+
     try:
         #find blue and turn left
         
-        time.sleep(0.5)
-        approach_target("blue", forward_speed=34, pid_params=pid_approach, stop_pixels=8000)
+        time.sleep(0.4)
+        approach_target("blue", forward_speed=34, pid_params=pid_approach, stop_pixels=10000)
         time.sleep(0.3)
         turn_angle(90)# delete or shorter, depends on where to place the car
+        
+        #time.sleep(0.5)
+        #forward_pid(40,40,0.5,0.05,1.2)
         
         time.sleep(0.3)
         forward_pid(40,40,0.5,0.05,0.6)
         time.sleep(0.3)
         turn_angle(-90)
         time.sleep(0.3)
-        forward_pid(40,40,0.5,0.05,0.6)
-        time.sleep(0.3)
-        
         search_color(-40,0.3,"yellow")
         #find yellow and turn right
         approach_target("yellow", forward_speed=34, pid_params=pid_approach, stop_pixels=10000)
         time.sleep(0.3)
-        turn_angle(-80)
+        turn_angle(-90)
         time.sleep(0.3)
-        forward_pid(40,40,0.5,0.05,1.1)
-        time.sleep(0.3)
-        turn_angle(30)
+        forward_pid(40,40,0.5,0.05,1)
         time.sleep(0.3)
         search_color(40,0.3,"red")
         
@@ -951,46 +950,54 @@ if __name__ == "__main__":
         time.sleep(0.3)
         turn_angle(150)
         time.sleep(0.3)
-        
-        
-        search_color(40,0.3,"yellow")
-        approach_target("yellow", forward_speed=34, pid_params=pid_approach, stop_pixels=10000)
-        time.sleep(0.3)
-        turn_angle(-90)
-        time.sleep(0.3)
-        forward_pid(40,40,0.5,0.05,1.0)
-        time.sleep(0.3)
-        turn_angle(90)
-        time.sleep(0.3)
-        search_color(40,0.3,"blue")
-    
-        #find blue and turn left
-        approach_target("blue", forward_speed=34, pid_params=pid_approach, stop_pixels=2400)
-        time.sleep(0.3)
-        turn_angle(150)
-        time.sleep(0.3)       
-        ##
+        #forward_pid(40,40,0.5,0.05,0.8)
+        #time.sleep(0.5)
+
         search_color(40,0.3,"yellow")
         
         approach_target("yellow", forward_speed=34, pid_params=pid_approach, stop_pixels=15000)
         time.sleep(0.3)
-        turn_angle(-80)
-        time.sleep(0.3)
-        forward_pid(40,40,0.5,0.05,1)
-        time.sleep(0.3)
-        turn_angle(90)
-        ##
-        search_color(40,0.3,"red")
-        
-        approach_target("red", forward_speed=34, pid_params=pid_approach, stop_pixels=9000)
-        time.sleep(0.3)
         turn_angle(-90)
         time.sleep(0.3)
-        forward_pid(60,60,0.5,0.05,0.8)
+        forward_pid(40,40,0.5,0.05,1.2)
         time.sleep(0.3)
-        turn_angle(90)
-        forward_pid(60,60,0.5,0.05,3)
-        cleanup()         
+        
+        search_color(40,0.3,"blue")
+        
+        #find blue and turn left
+        approach_target("blue", forward_speed=34, pid_params=pid_approach, stop_pixels=3000)
+        time.sleep(0.3)
+        turn_angle(150)
+        time.sleep(0.3)     
+        #forward_pid(40,40,0.5,0.05,1.0)
+        #time.sleep(0.5)  
+        
+        search_color(40,0.3,"yellow")
+        
+        approach_target("yellow", forward_speed=34, pid_params=pid_approach, stop_pixels=15000)
+        time.sleep(0.3) 
+        turn_angle(-90)
+        time.sleep(0.5)
+        forward_pid(40,40,0.5,0.05,0.6)
+        time.sleep(0.5)
+        search_color(40,0.3,"red")
+        
+        approach_target("red", forward_speed=34, pid_params=pid_approach, stop_pixels=3000)
+        time.sleep(0.3)     
+        turn_angle(-45)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,0.6)
+        time.sleep(0.3)
+        turn_angle(45)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,0.6)
+        time.sleep(0.3)
+        turn_angle(30)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,3)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,3)
+        cleanup()
     except KeyboardInterrupt:
         pass
     finally:

@@ -920,11 +920,8 @@ if __name__ == "__main__":
     pid_approach = PidParams(kp=0.18, ki=0.0, kd=0.012, min_delta=8, max_delta=12)
 
     try:
-        # turn_angle 即插即用示例（可把 turn_left 换成 turn_angle(90)）
-        # turn_angle(90)
-        # time.sleep(0.5)
-
         #find blue and turn left
+        
         time.sleep(0.5)
         #approach_target("blue", forward_speed=34, pid_params=pid_approach, stop_pixels=8000)
         #time.sleep(0.3)
@@ -935,22 +932,28 @@ if __name__ == "__main__":
         time.sleep(0.3)
         search_color(-40,0.3,"yellow")
         #find yellow and turn right
-        approach_target("yellow", forward_speed=28, pid_params=pid_approach, stop_pixels=15000)
+        approach_target("yellow", forward_speed=34, pid_params=pid_approach, stop_pixels=8000)
         time.sleep(0.3)
         turn_angle(-60)
         time.sleep(0.3)
-        forward_pid(40,40,0.5,0.05,0.8)
+        forward_pid(40,40,0.5,0.05,1)
         time.sleep(0.3)
-        turn_angle(60)
+        turn_angle(90)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,0.5)
         time.sleep(0.3)
         search_color(40,0.3,"red")
+        
         #find red and turn left
-        approach_target("red", forward_speed=28, pid_params=pid_approach, stop_pixels=6000)
+        approach_target("red", forward_speed=34, pid_params=pid_approach, stop_pixels=3000)
         time.sleep(0.3)
         turn_angle(150)
         time.sleep(0.3)
-        search_color(40,0.2,"yellow")
-        approach_target("yellow", forward_speed=28, pid_params=pid_approach, stop_pixels=8000)
+        
+        
+        search_color(40,0.3,"yellow")
+        
+        approach_target("yellow", forward_speed=34, pid_params=pid_approach, stop_pixels=15000)
         time.sleep(0.3)
         turn_angle(-90)
         time.sleep(0.3)
@@ -958,36 +961,51 @@ if __name__ == "__main__":
         time.sleep(0.3)
         turn_angle(90)
         time.sleep(0.3)
-        forward_pid(40,40,0.5,0.05,0.8)
+        forward_pid(40,40,0.5,0.05,0.6)
         time.sleep(0.3)
         
-        search_color(40,0.2,"blue")
-        
+        search_color(40,0.3,"blue")
+    
         #find blue and turn left
-        approach_target("blue", forward_speed=28, pid_params=pid_approach, stop_pixels=6000)
+        approach_target("blue", forward_speed=34, pid_params=pid_approach, stop_pixels=2400)
         time.sleep(0.3)
-        turn_angle(90)
+        turn_angle(150)
+        time.sleep(0.3)       
+        ##
+        search_color(40,0.3,"yellow")
+        
+        approach_target("yellow", forward_speed=34, pid_params=pid_approach, stop_pixels=15000)
         time.sleep(0.3)
-        forward_pid(40,40,0.5,0.01,0.8)
+        turn_angle(-90)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,1)
+        time.sleep(0.3)
+        turn_angle(60)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,0.6)
+        time.sleep(0.3)
+
+
+        search_color(40,0.3,"red")
+        
+        approach_target("red", forward_speed=34, pid_params=pid_approach, stop_pixels=9000)
+        time.sleep(0.3)     
+        turn_angle(-45)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,0.6)
+        time.sleep(0.3)
+        turn_angle(45)
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,0.6)
         time.sleep(0.3)
         turn_angle(30)
         time.sleep(0.3)
-        search_color(40,0.2,"red")
-        
-        #find red and sprint to the finish line
-        approach_target("red", forward_speed=28, pid_params=pid_approach, stop_pixels=15000)
-        time.sleep(0.3)
-        '''
-        turn_right(0.2,60)
-        time.sleep(0.5)
-        forward_pid(40,40,0.5,0.01,0.8)
-        time.sleep(0.5)
-        turn_left(0.2,60)
-        time.sleep(0.5)
         forward_pid(40,40,0.5,0.05,3)
-        '''
+        time.sleep(0.3)
+        forward_pid(40,40,0.5,0.05,3)
         cleanup()
     except KeyboardInterrupt:
         pass
     finally:
         cleanup()
+        
