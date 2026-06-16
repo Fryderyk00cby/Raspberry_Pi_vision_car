@@ -1,4 +1,5 @@
-# Raspberry Pi Vision Car — 魔方绕桩
+# Raspberry Pi Vision Car 树莓派纯视觉小车
+2026版本测试满分方案
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
