@@ -41,6 +41,7 @@ def main() -> None:
                 f"L={l:6d} (Δ{dl:+4d})   R={r:6d} (Δ{dr:+4d})   "
                 f"{'← 左轮在转' if dl else ''}{'→ 右轮在转' if dr else ''}",
                 end="\r",
+                flush=True,
             )
             last_l, last_r = l, r
             time.sleep(POLL_INTERVAL)
