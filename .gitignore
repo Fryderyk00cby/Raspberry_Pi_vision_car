@@ -34,7 +34,6 @@ desktop.ini
 
 # OpenCV / debug output
 *.avi
-*.mp4
 debug_*.jpg
 debug_*.png
 captures/
