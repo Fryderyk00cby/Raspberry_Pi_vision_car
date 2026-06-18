@@ -3,9 +3,18 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-基于树莓派的视觉小车控制库，面向**魔方绕桩**比赛任务。通过 OpenCV 识别蓝 / 黄 / 红三色魔方，结合 PID 视觉闭环与霍尔编码器运动控制，在赛道上完成搜色、靠近、转弯与冲线等动作。
 
-本仓库提供**可拼接的动作函数库**，不包含固定比赛流程，你可以根据规则在 `main` 里按现场赛道自行组合 `setup` → 动作函数 → `cleanup`。
+基于树莓派的视觉小车控制库，面向**魔方绕桩**比赛任务。通过 OpenCV 识别蓝 / 黄 / 红三色魔方，结合 PID 视觉闭环与霍尔编码器运动控制，完成搜色、靠近、转弯与冲线等动作。
+
+| 你能从这里得到什么 | 说明 |
+|--------------------|------|
+| **函数库** | `cube_v4.py` / `cube_v5.py`：可拼接 API，自行写 `main` 流程 |
+| **2026 参考实现** | `2026_task/`：五种赛道布局各一套完整可运行脚本 + 规则说明 |
+| **标定工具** | `test_script/`：编码器、转弯、直行、靠近等分项标定脚本 |
+| **颜色标定** | 根目录 `HSV_test.py`：临场调 HSV 阈值 |
+
+详细 API：[cube_v4.md](./cube_v4.md) · [cube_v5.md](./cube_v5.md)  
+2026 五种情况说明：[2026_task/2026_version_example.md](./2026_task/2026_version_example.md)
 
 ---
 
@@ -14,6 +23,7 @@
 - [功能概览](#功能概览)
 - [硬件要求](#硬件要求)
 - [项目结构](#项目结构)
+- [怎么选：函数库 / 2026 参考 / 标定](#怎么选函数库--2026-参考--标定)
 - [传参 vs Config（调参改哪里）](#传参-vs-config调参改哪里)
 - [环境依赖](#环境依赖)
 - [快速开始](#快速开始)
@@ -22,8 +32,6 @@
 - [临场标定清单](#临场标定清单)
 - [注意事项](#注意事项)
 - [许可证](#许可证)
-
-详细 API 文档：[cube_v4.md](./cube_v4.md) · [cube_v5.md](./cube_v5.md)
 
 ---
 
@@ -37,7 +45,7 @@
 | 编码器闭环 | `forward_pid` 按时间直行，`turn_angle` 按角度转弯（v4/v5 均支持） |
 | v5 增强 | 左/右轮搜色、减速靠近、丢目标自动恢复 |
 | 调试支持 | `cv2.imshow` 实时画面、`dry_run` 模式（无 GPIO 时只打印电机指令） |
-| 临场标定 | 独立脚本 `HSV_test.py` 调 HSV 阈值 |
+| 调参标定 | `HSV_test.py` + `test_script/` 分项标定脚本 |
 
 ---
 
@@ -62,13 +70,23 @@
 
 ```
 Raspberry_Pi_vision_car/
-├── cube_v4.py      # 主函数库（稳定版）
-├── cube_v5.py      # v4 增强版（推荐新项目使用）
-├── 2026_task/      # 2026 版电子系统导论课程项目规则实现示例代码（参考用）
-├── HSV_test.py     # HSV 颜色临场标定工具
-├── cube_v4.md      # v4 完整 API：每个函数的传参 / Config 说明
-├── cube_v5.md      # v5 完整 API：v5 专有增强与编码器说明
-├── LICENSE         # MIT 许可证
+├── cube_v4.py              # 主函数库（稳定版）
+├── cube_v5.py                # v4 增强版（推荐新项目使用）
+├── cube_v4.md / cube_v5.md   # 完整 API 文档
+├── HSV_test.py               # HSV 颜色临场标定
+├── test_script/              # （如果不擅使用的话直接在cube_v4框架里调可能效率更高）
+│   ├── calibrate_encoder.py
+│   ├── calibrate_turn_angle.py
+│   ├── calibrate_forward_pid.py
+│   ├── calibrate_approach.py
+│   └── calibrate_open_loop_turn.py
+├── 2026_task/                # 2026 规则五种赛道参考实现
+│   ├── rule.png              # 赛道尺寸与布局示意图
+│   ├── 2026_version_example.md
+│   ├── RL.mp4                # RL 情况实机演示（README 顶部嵌入）
+│   ├── adapt_LL/ … adapt_RR/ # 五种布局各一套自包含脚本
+│   └── …
+├── LICENSE
 └── README.md
 ```
 
@@ -79,8 +97,6 @@ Raspberry_Pi_vision_car/
 | **`cube_v4.py`** | 通用稳定版：已包含 `turn_angle`、`forward_pid`、`search_color`、`approach_target` |
 | **`cube_v5.py`** | 在 v4 基础上增加：`approach_target_brake`、`approach_target_recover`、`search_color(..., use_left_wheel=...)` |
 
-### v5 相比 v4
-
 | 项目 | v4 | v5 |
 |------|----|----|
 | `search_color` | `search_color(right_pwm, interval, color)`（右轮步进） | `search_color(wheel_pwm, interval, color, use_left_wheel=False)`（可选左/右轮） |
@@ -88,17 +104,43 @@ Raspberry_Pi_vision_car/
 | 丢目标恢复 | 无 | `approach_target_recover` |
 | 其余核心能力 | 与 v5 共享（`turn_angle`、`forward_pid`、`approach_target` 等） | 与 v4 共享 |
 
-**详细 API 文档：**
-
-- v4：**[cube_v4.md](./cube_v4.md)** — 全部公开 API、Config 总表、传参 vs Config 说明
-- v5：**[cube_v5.md](./cube_v5.md)** — v5 专有 API（搜色轮选择、减速靠近、丢目标恢复）与编码器说明
-
 ### 关于 `2026_task`
 
-- `2026_task/` 是 **2026 版本电子系统导论课程**项目规则实现示例代码目录（供参考）。
-- `2026_task` 的实现沿用 `cube_v4.py` 的核心代码框架（同一套基础函数与控制逻辑），主要差异在赛道/路线参数与流程拼接。
-- 目录下 `adapt_LL/LR/MM/RL/RR` 是不同路线适配样例，可按赛道选择与微调。
-- 五种情况说明见 **[2026_task/2026_version_example.md](./2026_task/2026_version_example.md)**，赛道规则示意图见 `2026_task/rule.png`。
+面向 **2026 年电子系统导论「魔方绕桩」** 规则，提供五种赛道布局（LL / LR / MM / RL / RR）的参考满分流程：
+
+| 目录 | 含义（蓝块 L7 + 红块 L6） |
+|------|---------------------------|
+| `adapt_LL` | 左 + 左 |
+| `adapt_LR` | 左 + 右 |
+| `adapt_MM` | 中 + 中 |
+| `adapt_RL` | 右 + 左 |
+| `adapt_RR` | 右 + 右 |
+
+- 每个 `adapt_*/*.py` 为**自包含**文件（函数库 + 比赛流程），不 `import` 根目录 `cube_v4.py`，可整文件拷贝到树莓派运行。
+- 赛道规则与临场选目录对照见 **[2026_task/2026_version_example.md](./2026_task/2026_version_example.md)**，示意图见 **`2026_task/rule.png`**。
+- 上方演示视频为 **RL** 情况实机跑法，对应脚本 **`2026_task/adapt_RL/RL.py`**。
+
+### 关于 `test_script`
+
+比赛前分项标定用独立脚本，从根目录 `cube_v4.py` / `cube_v5.py` 导入函数库。推荐顺序：
+
+```
+HSV_test.py → calibrate_encoder → calibrate_turn_angle → calibrate_forward_pid → calibrate_approach
+```
+
+完整说明见 **[test_script/README.md](./test_script/README.md)**。
+
+---
+
+## 怎么选：函数库 / 2026 参考 / 标定
+
+| 你的目标 | 从哪里开始 |
+|----------|------------|
+| 自己写比赛流程 | 根目录 `cube_v4.py` 或 `cube_v5.py`，在 `main` 里拼接 API |
+| 2026 规则、五种赛道直接参考 | 读 `2026_task/2026_version_example.md`，运行对应 `adapt_*/*.py` |
+| 上车前调参 | 先 `HSV_test.py`，再按 `test_script/README.md` 逐项标定 |
+| 只改某一趟的距离/角度 | 改 `main` **传参**（如 `turn_angle(90)`、`stop_pixels=8000`） |
+| 改硬件/识别/全局修正 | 改 `Config`（HSV、引脚、`TURN_CALIB` 等） |
 
 ---
 
@@ -150,7 +192,7 @@ python3 HSV_test.py
 
 需图形界面（本地桌面或 VNC）；SSH 无 X11 转发时请用 VNC。
 
-### 2. 编写比赛流程
+### 2. 编写比赛流程（函数库）
 
 **v4 示例（开环转弯 + 按时间直行）：**
 
@@ -184,7 +226,7 @@ pid = PidParams(kp=0.18, ki=0.0, kd=0.012, min_delta=8, max_delta=12)
 
 try:
     approach_target_recover("blue", 28, pid, stop_pixels=15000)
-    turn_angle(90)                   # 默认 speed=50, step=0.2
+    turn_angle(90)
     forward_pid(40, 40, 0.5, 0.05, 0.8)
 
     if search_color(-40, 0.3, "yellow"):
@@ -197,25 +239,18 @@ finally:
 
 标定 `turn_angle` 前，先在 `Config` 里设置 `WHEEL_DIAMETER_CM`、`TRACK_WIDTH_CM`，再调 `TURN_CALIB`（详见 [cube_v5.md §3](./cube_v5.md)）。
 
-### 3. 直接运行示例流程
+### 3. 直接运行 2026 参考流程
 
-`cube_v4.py` / `cube_v5.py` 末尾 `if __name__ == "__main__"` 含完整绕桩示例：
-
-```
-靠近蓝 → 左转 → 直行 → 搜黄 → 靠近黄 → 右转 → 直行 → 搜红 → ...
-→ 靠近红 → 左转 → 直行 → 搜蓝 → 靠近蓝 → 左转 → 直行 → 搜红
-→ 靠近红 → 右转 → 直行 → 左转 → 长直行冲线
-```
+对照当天赛道（见 `2026_task/rule.png` 或裁判公布的 L7、L6），进入对应目录运行：
 
 ```bash
-python3 cube_v4.py
-# 或
-python3 cube_v5.py
+# 示例：RL 情况（蓝右 + 红左）
+cd 2026_task/adapt_RL
+python3 RL.py
 ```
 
-可将示例中的 `turn_left` 逐步替换为 v5 的 `turn_angle`；直行仍用 `forward_pid`。
+五种情况与目录对照见 **[2026_task/2026_version_example.md](./2026_task/2026_version_example.md)**。
 
----
 
 ## 核心 API 一览
 
@@ -232,7 +267,7 @@ python3 cube_v5.py
 | `forward_time` | v4/v5 | 开环 | `left`, `right`, `duration` | 电机方向 |
 | `forward_pid` | v4/v5 | 编码器 | `left`, `right`, `step`, `interval`, `duration` | 编码器引脚 |
 
-**速度约定：** 所有速度为 PWM 占空比，范围 **-100 ~ 100**；负值表示该轮反转。`turn_angle`（v4/v5）里 `speed` 传正数，方向由 `angle_deg` 符号决定。
+**速度约定：** 所有速度为 PWM 占空比，范围 **-100 ~ 100**；负值表示该轮反转。`turn_angle` 里 `speed` 传正数，方向由 `angle_deg` 符号决定。
 
 ---
 
@@ -250,23 +285,24 @@ python3 cube_v5.py
 
 ---
 
-## 可能需要根据实际环境修改的固定参数
+## 可以赛前调试参数清单
 
 | 标定项 | 方法 | 传参 or Config |
 |--------|------|----------------|
 | HSV 颜色 | 运行 `HSV_test.py` | **Config** `LOW_*` / `HIGH_*` |
+| 编码器 | `test_script/calibrate_encoder.py` | **Config** `ENC_SWAP`、接线 |
 | 搜色步进 | 调 `wheel_pwm`、`interval`；v5 可选左/右轮 | **传参** `search_color` |
 | 搜色等待 / 总超时 | 画面稳不稳、能否扫完 | **Config** `SEARCH_COLOR_SETTLE_TIME`、`SEARCH_FULL_ROTATION_TIME` |
-| 靠近距离 | debug 窗口看 `px=` | **传参** `stop_pixels` |
+| 靠近距离 | debug 窗口看 `px=` 或 `calibrate_approach.py` | **传参** `stop_pixels` |
 | PID 手感 | 抖/慢/冲 | **传参** `PidParams` |
-| 转弯（开环） | 量 90° 对应时长 | **传参** `turn_left` / `turn_right` |
-| 直行（按时间） | 量赛道段长度 | **传参** `forward_pid` 的 `duration`、`step` |
-| 转弯（按角度） | v4/v5 `turn_angle(90)` 量实际角度 | **传参** `angle_deg`；**Config** `TURN_CALIB`、`TRACK_WIDTH_CM` |
-| 停点过冲 | v4/v5 到位仍滑 | **Config** `ENC_FINISH_PULSES` |
+| 转弯（开环） | `calibrate_open_loop_turn.py` | **传参** `turn_left` / `turn_right` |
+| 直行（按时间） | `calibrate_forward_pid.py` | **传参** `forward_pid` 的 `duration`、`step` |
+| 转弯（按角度） | `calibrate_turn_angle.py` | **传参** `angle_deg`；**Config** `TURN_CALIB`、`TRACK_WIDTH_CM` |
+| 停点过冲 | 到位仍滑 | **Config** `ENC_FINISH_PULSES` |
 | 电机方向 | 前进变后退 | **Config** `SWAP_WHEELS` / `INVERT_*` |
-| 编码器左右反 | v4/v5 距离/角度符号怪 | **Config** `ENC_SWAP` |
+| 编码器左右反 | 距离/角度符号怪 | **Config** `ENC_SWAP` |
 
-完整分表见 [cube_v4.md §12](./cube_v4.md)、[cube_v5.md §14](./cube_v5.md)。
+完整分表见 [cube_v4.md §12](./cube_v4.md)、[cube_v5.md §14](./cube_v5.md)、[test_script/README.md](./test_script/README.md)。
 
 ---
 
@@ -277,6 +313,7 @@ python3 cube_v5.py
 - 红色在 HSV 中跨越 0° 与 180°，需分别配置 `RED1` 与 `RED2` 两段阈值。
 - 非树莓派环境无法使用真实 GPIO，适合离线调试视觉与流程逻辑。
 - v4/v5 的 `turn_angle` 都依赖轮径、轮距与 `TURN_CALIB`，首次上车务必在地面标定后再写比赛流程。
+- `2026_task` 脚本为参考实现，现场仍需根据光照、起点位置微调 `__main__` 中的角度与直行参数，不过差异应该不大。
 
 ---
 
