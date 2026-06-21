@@ -6,8 +6,7 @@
 用法：
     python3 test_script/calibrate_open_loop_turn.py
 
-适用于尚未启用 turn_angle，或需要开环补一小段角度时。
-推荐主流程仍优先用 calibrate_turn_angle.py。
+适用于开环转弯标定；主流程推荐 calibrate_turn_angle.py（编码器 turn_angle）。
 """
 
 import time

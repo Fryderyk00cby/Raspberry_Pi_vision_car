@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-魔方绕桩任务 — 可拼接函数库（OpenCV + RPi.GPIO）
+魔方绕桩 — 可拼接函数库 v5（OpenCV + RPi.GPIO）
 
-本文件不提供完整 main，只提供动作函数 + 初始化/清理/调试显示。
-  含 forward_pid / turn_angle（霍尔编码器）、search_color（步进搜色）。
-速度参数均为 PWM 占空比，范围 -100~100；负值表示该轮反转（后退）。
+在 v4 基础上增加：左/右轮搜色、减速靠近（approach_target_brake）、
+丢目标恢复（approach_target_recover）。其余含 turn_angle、forward_pid 等。
 
-摄像头（参考 text_alms）：默认 320x240 @ 40fps，降低分辨率以提升树莓派帧率。
-  换分辨率后须同步缩放面积阈值与横向像素容差，见 Config 内注释。
-
-实时画面（与 reference_pj/main.py 一致）：9
-  - 树莓派本地：Config.SHOW_DEBUG = True，调用 show_debug()，用 cv2.imshow 看窗口。
-  - 电脑远程看画面（任选其一）：
-      1) SSH 带 X11：ssh -X pi@<IP>，再运行你的脚本（需树莓派有桌面或 X 转发）。
-      2) VNC：树莓派开 VNC，电脑用 VNC 客户端连上去，imshow 窗口在远程桌面里。
-      3) 无图形界面时：可把 SHOW_DEBUG 关掉，仅用 print 日志；或自行加 mjpg-streamer 等推流。
+速度均为 PWM 占空比 -100~100，负值表示该轮反转。
+摄像头默认 320×240 @ 40fps；改分辨率后须同步调整 Config 中的面积阈值。
+调试：Config.SHOW_DEBUG=True 时在循环中调用 show_debug()；远程可看 VNC 或 ssh -X。
 """
 
 import math
@@ -45,7 +38,7 @@ class Config:
 
     CAMERA_ID: int = 0
     CAMERA_BACKEND: str = "v4l2"
-    # 降分辨率换帧率（参考 text_alms）；相对 640x480 画面面积约 ×0.25
+    # 320×240 相对 640×480 面积约 ×0.25；改分辨率须同步改面积阈值
     WIDTH: int = 320
     HEIGHT: int = 240
     FPS: int = 40
@@ -58,7 +51,7 @@ class Config:
     RIGHT_IN2: int = 21
     PWM_FREQ: int = 80
 
-    # 霍尔编码器（参考 v18：B2A=GPIO6, B1A=GPIO12，单相上升沿累计计数）
+    # 霍尔编码器：左 GPIO 6，右 GPIO 12（单相上升沿累计）
     LEFT_ENCODER: int = 6
     RIGHT_ENCODER: int = 12
     ENCODER_PULSES_PER_REV: float = 585.0
@@ -86,7 +79,7 @@ class Config:
     LOW_BLUE: Tuple[int, int, int] = (100, 120,70)
     HIGH_BLUE: Tuple[int, int, int] = (130, 255, 255)
 
-    # 轮廓面积阈值（随分辨率缩放；640x480 时分别为 330000 / 4000 / 85000）
+    # 轮廓面积阈值（320×240 下约 80000 / 21000；改分辨率须按比例缩放）
     MAX_VALID_AREA: int = 80000
     APPROACH_STOP_PIXELS: int = 21000
 
@@ -585,10 +578,7 @@ def _require_ready() -> Tuple[CameraThread, Vision, Car]:
 
 
 def show_debug(state: str, det: Optional[Dict] = None) -> None:
-    """
-    调试画面：与 reference_pj/main.py 相同，使用 cv2.imshow。
-    在循环里每个控制周期调用一次即可刷新窗口；按 Config.SHOW_DEBUG 开关。
-    """
+    """调试画面：cv2.imshow 叠加识别结果；由 Config.SHOW_DEBUG 开关。"""
     if not CFG.SHOW_DEBUG:
         return
     cam, vis, _ = _require_ready()
@@ -626,7 +616,7 @@ def search_color(
     单轮步进旋转搜索指定颜色；找到与否与 approach_target 能否开进同一标准。
 
     每步流程：固定一侧轮为 0、另一侧轮 wheel_pwm 转 interval 秒 → 停车 → 等画面稳 → 识别一帧。
-    识别条件同 approach_target：最大色块面积在 [1, MAX_VALID_AREA] 内即视为找到。
+    识别条件同 approach_target：最大色块面积在 [_APPROACH_DETECT_MIN_PIXELS, MAX_VALID_AREA] 内即视为找到。
 
     参数：
         wheel_pwm:      驱动轮 PWM（-100~100，可正可负），另一侧轮恒为 0
@@ -1016,7 +1006,7 @@ def forward_pid(
 
 def turn_angle(angle_deg: float, speed: float = 50, step: float = 0.2) -> None:
     """
-    编码器闭环原地转指定角度（v4+ 同款，setup 后直接调用）。
+    编码器闭环原地转指定角度（setup 后直接调用）。
 
     参数：
         angle_deg: 角度（度）。正=左转，负=右转
@@ -1042,14 +1032,11 @@ def turn_angle(angle_deg: float, speed: float = 50, step: float = 0.2) -> None:
 
 
 if __name__ == "__main__":
-    # ----- 1. 初始化（调试可先 DRY_RUN=True 只看识别）-----
     setup(dry_run=False, show_debug=True)
-
     pid_approach = PidParams(kp=0.18, ki=0.0, kd=0.012, min_delta=8, max_delta=12)
 
     try:
-       #finish your code here
-        cleanup()
+        pass  # 在此编写比赛流程，或参考 2026_task/
     except KeyboardInterrupt:
         pass
     finally:

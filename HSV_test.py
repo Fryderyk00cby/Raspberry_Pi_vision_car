@@ -3,7 +3,7 @@
 """
 HSV 临场标定 — 仅 mask 预览（树莓派 + VNC/本地桌面）
 
-独立脚本，不依赖 cube_new / cube_v4 等主程序。
+独立脚本，不依赖 cube_v4 / cube_v5 主程序。
 
 用法：
   1. 修改下方 LOW/HIGH 常量，运行 python3 HSV_test.py
@@ -41,12 +41,12 @@ PREVIEW_COLOR = "blue"
 
 # 摄像头
 CAMERA_ID = 0
-CAMERA_BACKEND = "v4l2"  # 树莓派用 v4l2；Windows 调试可改为 "auto"
+CAMERA_BACKEND = "v4l2"  # Linux 摄像头后端；Windows 调试可改为 "auto"
 WIDTH = 320
 HEIGHT = 240
 FPS = 40
 
-# 对照主程序 detect 阈值
+# 预览窗口判定用；标定 stop_pixels 时以 cube_v4/v5 调试窗口 px= 为准
 FIND_MIN_PIXELS = 1000
 MAX_VALID_AREA = 80000
 
@@ -62,7 +62,7 @@ def open_camera(
     fps: int = FPS,
     backend: str = CAMERA_BACKEND,
 ):
-    """打开摄像头，逻辑与 cube_new.open_camera 一致。"""
+    """打开摄像头；参数与 cube_v4 / cube_v5 的 CameraThread 一致。"""
     backend = backend.lower()
     tries = []
     if backend in ("v4l2", "auto") and hasattr(cv2, "CAP_V4L2"):
@@ -90,7 +90,7 @@ def open_camera(
 
 
 def mask_color(frame, color: str):
-    """与主程序 Vision.mask_color 逻辑一致，阈值来自本文件顶部常量。"""
+    """HSV 掩膜，阈值逻辑与 cube_v4 / cube_v5 的 Vision.mask_color 一致。"""
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     if color == "red":
         m1 = cv2.inRange(hsv, np.array(LOW_RED1, np.uint8), np.array(HIGH_RED1, np.uint8))
